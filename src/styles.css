@@ -1,0 +1,61 @@
+:root {
+  color: #392418;
+  background: #e9deca;
+  --cream: #faf1e2;
+  --paper: #fff9ed;
+  --ink: #392418;
+  --muted: #6d5544;
+  --line: #d8c4a8;
+  --green: #174d3c;
+  --sage: #dbe3c9;
+  --serif: Georgia, 'Times New Roman', serif;
+  --sans: 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--sans);
+  font-synthesis: none;
+  color-scheme: light;
+  text-rendering: optimizeLegibility;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; min-width: 280px; }
+button, input, textarea, select { font: inherit; }
+button { border: 0; background: transparent; padding: 0; color: inherit; cursor: pointer; }
+button:disabled { cursor: default; }
+button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid #0e624c; outline-offset: 3px; }
+input, textarea, select {
+  padding: .65rem .78rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fffdf6;
+  color: var(--ink);
+  max-width: 100%;
+}
+input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #407359; outline-offset: 1px; }
+a { color: var(--green); }
+img { max-width: 100%; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .45rem;
+  min-height: 44px;
+  padding: .53rem .82rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: var(--paper);
+  text-decoration: none;
+  font-weight: 650;
+  line-height: 1.22;
+}
+.btn:not(:disabled):hover { background: #f1e4cd; }
+.btn:disabled { opacity: .55; }
+.btn--green { color: #fffaf0; background: var(--green); border-color: var(--green); }
+.btn--green:not(:disabled):hover { background: #226149; }
+.field-label { display: grid; gap: .35rem; min-width: 0; font-size: .9rem; font-weight: 650; }
+.field-label input, .field-label textarea, .field-label select { width: 100%; font-size: 1rem; font-weight: 400; }
+.form-error, .form-success { margin: 0; padding: .65rem .8rem; border-radius: 8px; font-size: .92rem; }
+.form-error { background: #f9e4d8; color: #843b26; }
+.form-success { background: #e6eed9; color: var(--green); }
+.site-loading { margin: 3rem auto; text-align: center; }

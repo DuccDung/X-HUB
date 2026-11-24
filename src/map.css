@@ -1,0 +1,125 @@
+.floor-map {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  aspect-ratio: 910 / 1468;
+  container-type: size;
+  overflow: hidden;
+  background: #c29465;
+  user-select: none;
+}
+
+.floor-map__art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.floor-map__anchor { position: absolute; width: 0; height: 0; }
+.floor-map__anchor[data-highlight='true'] { z-index: 2; }
+.floor-map__group { position: absolute; width: 0; height: 0; }
+.floor-map__chair, .floor-map__table { position: absolute; outline-offset: 3px; }
+.floor-map__chair { width: 5.6cqw; max-width: none; transform: translate(-50%, -50%) rotate(var(--chair-angle)); }
+.floor-map__chair img, .floor-map__table img { display: block; width: 100%; height: auto; pointer-events: none; }
+.floor-map__table {
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 10.9cqw;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 27%;
+}
+.floor-map__table[data-shape='round'] { border-radius: 50%; }
+.floor-map__table img { transform: rotate(var(--rotation)); }
+.floor-map__table::before { content: ''; position: absolute; inset: -3px; border-radius: inherit; }
+.floor-map__table:hover img { filter: brightness(1.08); }
+.floor-map__table--current { outline: 2px solid #074a3d; box-shadow: 0 0 12px 6px #9fffa2b3; }
+.floor-map__label {
+  position: absolute;
+  pointer-events: none;
+  align-content: center;
+  min-width: 58%;
+  max-width: 100%;
+  height: 43%;
+  padding: 0 .17em;
+  border-radius: .34em;
+  background: #f9e7ba;
+  box-shadow: 0 1px 2px #5832179c, inset 0 0 0 1px #c69f68;
+  color: #392014;
+  font: 700 clamp(10px, 3.1cqw, 19px)/1 var(--serif);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.floor-map__handle { touch-action: none; cursor: grab; }
+.floor-map__handle:active { cursor: grabbing; }
+.floor-map__handle[aria-pressed='true'] { outline: 2px solid #0a5342; box-shadow: 0 0 0 5px #f0e2a4ad; z-index: 1; }
+.floor-map__character {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  z-index: 1;
+  transform: translate(-50%, -52%);
+  pointer-events: none;
+}
+.floor-map__character[data-position='above'] { transform: translate(-50%, -86%); }
+.floor-map__character[data-position='above'] .floor-map__character-name { grid-row: 1; }
+.floor-map__character[data-position='below'] { transform: translate(-50%, -12%); }
+.floor-map__character .character-sprite { width: 9cqw; height: 12cqw; filter: drop-shadow(0 2px 1px #3b2b2761); }
+.floor-map__character-name {
+  max-width: clamp(52px, 23cqw, 110px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: #fcf2da;
+  box-shadow: 0 1px 3px #5b371452;
+  color: #492a19;
+  font: 700 clamp(9px, 2.55cqw, 14px)/1.15 var(--sans);
+  white-space: nowrap;
+}
+.floor-map__character[data-self='true'] .floor-map__character-name { color: #fffaf0; background: #145342; }
+.floor-map__online {
+  position: absolute;
+  left: 3.7cqw;
+  top: -5.5cqw;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border: 1px solid #fff0d2;
+  background: #fbf2dc;
+  border-radius: 999px;
+  color: #164a38;
+  box-shadow: 0 1px 5px #4b281947;
+  font: 700 .65rem/1.35 var(--sans);
+  pointer-events: none;
+}
+.floor-map__online span { width: 6px; height: 6px; border-radius: 50%; background: #438334; }
+.floor-map__location {
+  position: absolute;
+  z-index: 2;
+  left: 2.8cqw;
+  bottom: 6.5cqw;
+  border: 1px solid #fff2cc;
+  border-radius: 7px;
+  padding: .33em .62em;
+  background: #08483e;
+  color: #fffaf0;
+  font: 700 clamp(10px, 2.8cqw, 16px)/1.25 var(--sans);
+  white-space: nowrap;
+  box-shadow: 0 2px 6px #3a261e6b;
+  pointer-events: none;
+}
+.floor-map__location::after {
+  content: '';
+  position: absolute;
+  left: .55em;
+  top: 100%;
+  width: .54em;
+  height: 1em;
+  background: inherit;
+  clip-path: polygon(23% 0, 100% 0, 0 100%);
+}
+.floor-map__location[data-side='left'] { left: auto; right: 2.8cqw; }
+.floor-map__location[data-side='left']::after { left: auto; right: .55em; transform: scaleX(-1); }
+.floor-map__location[data-below='true'] { bottom: auto; top: 6.5cqw; }
+.floor-map__location[data-below='true']::after { top: auto; bottom: 100%; scale: 1 -1; }
