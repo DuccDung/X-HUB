@@ -1,3 +1,6 @@
+export const floorIds = [1, 2] as const;
+export type FloorId = typeof floorIds[number];
+
 export interface ChairLayout {
   id: string;
   x: number;
@@ -7,6 +10,7 @@ export interface ChairLayout {
 export interface TableLayout {
   id: string;
   label: string;
+  floor: FloorId;
   shape: 'round' | 'square';
   x: number;
   y: number;

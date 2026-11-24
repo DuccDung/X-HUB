@@ -239,6 +239,7 @@
 
 .xc-admin__stage-toolbar {
   padding: 9px 12px;
+  flex-wrap: wrap;
 }
 
 .xc-admin__switch,

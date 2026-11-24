@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import QRCode from 'qrcode'
 import { api, ApiError } from './api'
 import { MapView } from './Map'
-import type { AdminLayout, TableLayout } from './shared'
+import { floorIds } from './shared'
+import type { AdminLayout, FloorId, TableLayout } from './shared'
 import './admin.css'
 
 type EditorView = 'editor' | 'preview'
@@ -189,6 +190,7 @@ function Editor({
 }) {
   const [layout, setLayout] = useState(initial)
   const [tables, setTables] = useState(initial.draft.tables)
+  const [floor, setFloor] = useState<FloorId>(() => initial.draft.tables[0]?.floor ?? 1)
   const [selection, setSelection] = useState<Selection | null>(() => {
     const first = initial.draft.tables[0]
     return first ? { tableId: first.id } : null
@@ -199,6 +201,7 @@ function Editor({
   const [notice, setNotice] = useState<Notice | null>(null)
   const qrTab = useRef<HTMLButtonElement>(null)
 
+  const floorTables = tables.filter((table) => table.floor === floor)
   const selected = tables.find((table) => table.id === selection?.tableId)
   const chair = selected?.chairs.find((item) => item.id === selection?.chairId)
   const currentJson = JSON.stringify(tables)
@@ -224,8 +227,19 @@ function Editor({
     setTables((current) => current.map((table) => table.id === id ? change(table) : table))
   }
 
+  function selectFloor(next: FloorId) {
+    setFloor(next)
+    const currentOnNext = selected && selected.floor === next
+    if (!currentOnNext) {
+      const first = tables.find((table) => table.floor === next)
+      setSelection(first ? { tableId: first.id } : null)
+    }
+  }
+
   function selectTable(id: string) {
     setSelection({ tableId: id })
+    const match = tables.find((table) => table.id === id)
+    if (match && match.floor !== floor) setFloor(match.floor)
   }
 
   function selectChair(tableId: string, chairId: string) {
@@ -245,17 +259,22 @@ function Editor({
   }
 
   function addTable() {
-    const usedLabels = new Set(tables.map((table) => table.label.trim()))
-    const label = Array.from({ length: 81 }, (_, index) => String(index + 1).padStart(2, '0'))
-      .find((number) => !usedLabels.has(number))!
+    const usedLabels = new Set(tables.map((table) => table.label.trim().toLocaleLowerCase('vi')))
+    const label = Array.from({ length: 81 }, (_, index) =>
+      floor === 2 ? String(201 + index) : String(index + 1).padStart(2, '0'),
+    ).find((number) => !usedLabels.has(number.toLocaleLowerCase('vi')))!
     const id = newId('table')
-    const candidates = [55, 45, 65, 35, 75, 25].flatMap((y) => [50, 38, 62, 29, 71].map((x) => ({ x, y })))
-    const placement = candidates.find(({ x, y }) => tables.every((table) =>
+    const sameFloor = tables.filter((table) => table.floor === floor)
+    const candidates = floor === 2
+      ? [48.5, 64.5, 33].flatMap((y) => (y < 40 ? [30, 49.5] : [53, 30, 75]).map((x) => ({ x, y })))
+      : [55, 45, 65, 35, 75, 25].flatMap((y) => [50, 38, 62, 29, 71].map((x) => ({ x, y })))
+    const placement = candidates.find(({ x, y }) => sameFloor.every((table) =>
       Math.abs(table.x - x) >= 10 || Math.abs(table.y - y) >= 13,
     )) ?? { x: 50, y: 50 }
     setTables((current) => [...current, {
       id,
       label,
+      floor,
       shape: 'round',
       ...placement,
       rotation: 0,
@@ -275,10 +294,10 @@ function Editor({
     const hint = wasPublished ? ' Mã QR của bàn sẽ hết hiệu lực khi công bố sơ đồ.' : ''
     if (!window.confirm(`Xóa bàn ${label} và toàn bộ ghế của bàn khỏi bản nháp?${hint}`)) return
 
-    const index = tables.findIndex((item) => item.id === table.id)
     const remaining = tables.filter((item) => item.id !== table.id)
+    const remainingOnFloor = remaining.filter((item) => item.floor === table.floor)
     setTables(remaining)
-    const next = remaining[index] ?? remaining.at(-1)
+    const next = remainingOnFloor[0] ?? null
     setSelection(next ? { tableId: next.id } : null)
     setNotice(null)
   }
@@ -390,18 +409,26 @@ function Editor({
         <div className="xc-admin__grid">
           <section className="xc-admin__stage" aria-label="Trình chỉnh sơ đồ">
             <div className="xc-admin__stage-toolbar">
+              <div className="xc-admin__switch" role="group" aria-label="Chọn tầng">
+                {floorIds.map((id) => (
+                  <button key={id} type="button" aria-pressed={floor === id} onClick={() => selectFloor(id)}>
+                    Tầng {id}
+                  </button>
+                ))}
+              </div>
               <div className="xc-admin__switch" role="group" aria-label="Chế độ hiển thị">
                 <button type="button" aria-pressed={view === 'editor'} onClick={() => setView('editor')}>Chỉnh sơ đồ</button>
                 <button type="button" aria-pressed={view === 'preview'} onClick={() => setView('preview')}>Xem trước</button>
               </div>
-              <span className="xc-admin__count">{tables.length} bàn</span>
+              <span className="xc-admin__count">{floorTables.length} bàn · tổng {tables.length}</span>
             </div>
             <div className={`xc-admin__canvas${view === 'preview' ? ' xc-admin__canvas--preview' : ''}`}>
               <div className="xc-admin__map">
                 <MapView
-                  tables={tables}
+                  floor={floor}
+                  tables={floorTables}
                   mode={view === 'editor' ? 'editor' : 'guest'}
-                  currentTableId={view === 'preview' ? selected?.id : null}
+                  currentTableId={view === 'preview' && selected?.floor === floor ? selected.id : null}
                   selectedTableId={view === 'editor' ? selected?.id : null}
                   selectedChairId={view === 'editor' ? chair?.id : null}
                   onTableClick={view === 'editor' ? selectTable : undefined}
@@ -426,7 +453,15 @@ function Editor({
                   <span>Chọn bàn</span>
                   <select value={selected?.id ?? ''} disabled={!tables.length} onChange={(event) => selectTable(event.target.value)}>
                     {tables.length === 0 && <option value="">Chưa có bàn</option>}
-                    {tables.map((table) => <option key={table.id} value={table.id}>Bàn {table.label}</option>)}
+                    {floorIds.map((id) => {
+                      const items = tables.filter((table) => table.floor === id)
+                      if (!items.length) return null
+                      return (
+                        <optgroup key={id} label={`Tầng ${id}`}>
+                          {items.map((table) => <option key={table.id} value={table.id}>Bàn {table.label}</option>)}
+                        </optgroup>
+                      )
+                    })}
                   </select>
                 </label>
                 <div className="xc-admin__table-actions">
@@ -460,6 +495,17 @@ function Editor({
                       </select>
                     </label>
                   </div>
+                  <label className="xc-admin__field">
+                    <span>Tầng</span>
+                    <select value={selected.floor} onChange={(event) => {
+                      const nextFloor: FloorId = event.target.value === '2' ? 2 : 1
+                      updateTable(selected.id, (table) => ({ ...table, floor: nextFloor }))
+                      setFloor(nextFloor)
+                    }}>
+                      <option value={1}>Tầng 1</option>
+                      <option value={2}>Tầng 2</option>
+                    </select>
+                  </label>
                   <div className="xc-admin__input-row" key={selected.id}>
                     <CoordinateField label="Vị trí ngang" value={selected.x} onChange={(x) => moveTable(selected.id, x, selected.y)} />
                     <CoordinateField label="Vị trí dọc" value={selected.y} onChange={(y) => moveTable(selected.id, selected.x, y)} />

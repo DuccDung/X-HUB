@@ -6,6 +6,14 @@
   pointer-events: none;
 }
 
+.character-sprite[data-pose='seated'] {
+  aspect-ratio: 240 / 420;
+}
+
+.character-sprite[data-flip='true'] {
+  transform: scaleX(-1);
+}
+
 .character-sprite img {
   position: absolute;
   inset: 0;

@@ -2,8 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { characterBottoms, characterModels, characterShoes, characterTops } from '../src/shared.ts'
-import type { AdminLayout, CharacterOutfit, GuestProfile, JournalEntry, Layout, TableCharacter, TableLayout } from '../src/shared.ts'
+import { characterBottoms, characterModels, characterShoes, characterTops, floorIds } from '../src/shared.ts'
+import type { AdminLayout, CharacterOutfit, FloorId, GuestProfile, JournalEntry, Layout, TableCharacter, TableLayout } from '../src/shared.ts'
 
 export class AppError extends Error {
   statusCode: number
@@ -91,6 +91,10 @@ export function parseTables(value: unknown): TableLayout[] {
     ids.add(id)
     labels.add(labelKey)
 
+    const floor = table.floor === undefined ? 1 : table.floor
+    if (floor !== 1 && floor !== 2) {
+      throw new AppError(400, 'Tầng của bàn không hợp lệ.')
+    }
     const shape = table.shape
     if (shape !== 'round' && shape !== 'square') {
       throw new AppError(400, 'Kiểu bàn không hợp lệ.')
@@ -114,6 +118,7 @@ export function parseTables(value: unknown): TableLayout[] {
     return {
       id,
       label,
+      floor,
       shape,
       x: coordinate(table.x, 0, 100),
       y: coordinate(table.y, 0, 100),
@@ -123,7 +128,7 @@ export function parseTables(value: unknown): TableLayout[] {
   })
 }
 
-function initialTables(): TableLayout[] {
+function initialFloor1Tables(): TableLayout[] {
   const columns = [26, 51.5, 77]
   const rows = [30, 44.7, 60.2, 75.4]
   const roundTables = new Set([1, 3, 5, 7, 11, 12])
@@ -133,6 +138,7 @@ function initialTables(): TableLayout[] {
     return {
       id: `table-${label}`,
       label,
+      floor: 1 as FloorId,
       shape: roundTables.has(number) ? 'round' : 'square',
       x,
       y,
@@ -140,6 +146,37 @@ function initialTables(): TableLayout[] {
       chairs: [{ id: 'top', x: 0, y: -4.8 }, { id: 'bottom', x: 0, y: 4.8 }],
     }
   }))
+}
+
+function initialFloor2Tables(): TableLayout[] {
+  const spots: { label: string; shape: 'round' | 'square'; x: number; y: number }[] = [
+    { label: '201', shape: 'round', x: 30, y: 33 },
+    { label: '202', shape: 'square', x: 49.5, y: 33 },
+    { label: '203', shape: 'square', x: 30, y: 48.5 },
+    { label: '204', shape: 'round', x: 53, y: 48.5 },
+    { label: '205', shape: 'square', x: 75, y: 48.5 },
+    { label: '206', shape: 'round', x: 30, y: 64.5 },
+    { label: '207', shape: 'square', x: 53, y: 64.5 },
+    { label: '208', shape: 'round', x: 75, y: 64.5 },
+  ]
+  return spots.map(({ label, shape, x, y }) => ({
+    id: `table-${label}`,
+    label,
+    floor: 2 as FloorId,
+    shape,
+    x,
+    y,
+    rotation: 0,
+    chairs: [{ id: 'top', x: 0, y: -4.8 }, { id: 'bottom', x: 0, y: 4.8 }],
+  }))
+}
+
+function initialTables(): TableLayout[] {
+  return [...initialFloor1Tables(), ...initialFloor2Tables()]
+}
+
+function normalizeFloor(value: unknown): FloorId {
+  return (floorIds as readonly unknown[]).includes(value) ? (value as FloorId) : 1
 }
 
 export function openDatabase(filename: string) {
@@ -227,17 +264,47 @@ export function openDatabase(filename: string) {
   }
 
   transaction(() => {
-    if (readLayout.get('published')) return
-    const tables = initialTables()
-    const contents = JSON.stringify(tables)
-    writeLayout.run('draft', 1, contents)
-    writeLayout.run('published', 1, contents)
-    createCodes(tables)
+    const existingPublished = readLayout.get('published') as StoredLayout | undefined
+    if (!existingPublished) {
+      const tables = initialTables()
+      const contents = JSON.stringify(tables)
+      writeLayout.run('draft', 1, contents)
+      writeLayout.run('published', 1, contents)
+      createCodes(tables)
+      return
+    }
+    const existingDraft = readLayout.get('draft') as StoredLayout | undefined
+    const rawPublished = JSON.parse(existingPublished.tables) as Partial<TableLayout>[]
+    const rawDraft = existingDraft ? (JSON.parse(existingDraft.tables) as Partial<TableLayout>[]) : rawPublished
+    const hasFloorField = rawPublished.some((table) => 'floor' in table) || rawDraft.some((table) => 'floor' in table)
+    if (hasFloorField) return
+
+    // Backward-compatible one-time upgrade for existing databases created before Floor 2:
+    // tag existing tables as floor 1 and append starter Floor 2 tables without overwriting existing data.
+    const floor2 = initialFloor2Tables()
+    const appendFloor2 = (existing: Partial<TableLayout>[]): TableLayout[] => {
+      const normalized = existing.map((table) => ({ ...table, floor: normalizeFloor(table.floor) }) as TableLayout)
+      const usedIds = new Set(normalized.map((table) => table.id))
+      const usedLabels = new Set(normalized.map((table) => table.label.trim().toLocaleLowerCase('vi')))
+      const additions = floor2.filter((table) =>
+        !usedIds.has(table.id) && !usedLabels.has(table.label.toLocaleLowerCase('vi')),
+      )
+      return [...normalized, ...additions].slice(0, 80)
+    }
+    const nextPublished = appendFloor2(rawPublished)
+    const nextDraft = appendFloor2(rawDraft)
+    writeLayout.run('published', existingPublished.version, JSON.stringify(nextPublished))
+    writeLayout.run('draft', existingDraft?.version ?? existingPublished.version, JSON.stringify(nextDraft))
+    createCodes([...nextPublished, ...nextDraft])
   })
 
   function read(slot: 'draft' | 'published'): Layout {
     const stored = readLayout.get(slot) as StoredLayout
-    return { version: stored.version, tables: JSON.parse(stored.tables) as TableLayout[] }
+    const tables = (JSON.parse(stored.tables) as Partial<TableLayout>[]).map((table) => ({
+      ...table,
+      floor: normalizeFloor(table.floor),
+    }) as TableLayout)
+    return { version: stored.version, tables }
   }
 
   let published = read('published')

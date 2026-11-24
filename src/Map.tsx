@@ -1,11 +1,13 @@
-import { useRef } from 'react';
+import { Fragment, useRef } from 'react';
 import type { CSSProperties, PointerEvent } from 'react';
 import { CharacterSprite } from './CharacterSprite';
-import type { TableCharacter, TableLayout, VenueActivity } from './shared';
+import type { CharacterFacing } from './CharacterSprite';
+import type { FloorId, TableCharacter, TableLayout, VenueActivity } from './shared';
 import './map.css';
 
 interface MapProps {
   tables: TableLayout[];
+  floor?: FloorId;
   mode?: 'guest' | 'editor';
   currentTableId?: string | null;
   presence?: Record<string, number>;
@@ -17,6 +19,7 @@ interface MapProps {
   onChairClick?: (tableId: string, chairId: string) => void;
   onTableDrag?: (id: string, x: number, y: number) => void;
   onChairDrag?: (tableId: string, chairId: string, x: number, y: number) => void;
+  onFloorChange?: (floor: FloorId) => void;
 }
 
 interface Drag {
@@ -28,14 +31,29 @@ interface Drag {
   chair?: TableLayout['chairs'][number];
 }
 
+type SeatSide = 'top' | 'bottom' | 'left' | 'right';
+
 const mapAspect = 910 / 1468;
-const extraSeats = [{ x: 0, y: -4.8 }, { x: 0, y: 4.8 }, { x: -8, y: 0 }, { x: 8, y: 0 }];
+const extraSeats = [{ x: 0, y: -4.8 }, { x: 0, y: 4.8 }, { x: -7.5, y: 0 }, { x: 7.5, y: 0 }];
 
 function rotateOffset(x: number, y: number, degrees: number) {
   const angle = degrees * Math.PI / 180;
   const cosine = Math.cos(angle);
   const sine = Math.sin(angle);
   return { x: x * cosine - y / mapAspect * sine, y: x * mapAspect * sine + y * cosine };
+}
+
+function seatOrientation(offset: { x: number; y: number }): { seat: SeatSide; facing: CharacterFacing } {
+  const physicalX = offset.x;
+  const physicalY = offset.y / mapAspect;
+  if (Math.abs(physicalY) >= Math.abs(physicalX)) {
+    return physicalY <= 0
+      ? { seat: 'top', facing: 'front' }
+      : { seat: 'bottom', facing: 'back' };
+  }
+  return physicalX < 0
+    ? { seat: 'left', facing: 'right' }
+    : { seat: 'right', facing: 'left' };
 }
 
 function round(value: number) {
@@ -50,24 +68,38 @@ function MapCharacters({ table, people, selfId }: { table: TableLayout; people: 
   return people.map((person, index) => {
     const chair = table.chairs[index] ?? extraSeats[index];
     const offset = rotateOffset(chair.x, chair.y, table.rotation);
-    const position = offset.y < -2.5 ? 'above' : offset.y > 2.5 ? 'below' : 'side';
-    const x = position === 'side' ? offset.x + (offset.x < 0 ? -3 : 3) : offset.x;
-    return <div key={person.id} className="floor-map__character" data-self={person.id === selfId}
-      data-position={position} aria-hidden="true"
-      style={{ left: `${clamp(x, 12 - table.x, 88 - table.x)}cqw`, top: `${offset.y}cqh` }}>
-      <CharacterSprite model={person.model} outfit={person.outfit} />
-      <span className="floor-map__character-name" dir="auto">{person.displayName}</span>
-    </div>;
+    const { seat, facing } = seatOrientation(offset);
+    const layer = seat === 'bottom' ? 'front' : 'behind';
+    const clampedX = clamp(offset.x, 8 - table.x, 92 - table.x);
+    const labelX = clamp(
+      seat === 'left' ? offset.x - 1.2 : seat === 'right' ? offset.x + 1.2 : offset.x,
+      12 - table.x,
+      88 - table.x,
+    );
+    return (
+      <Fragment key={person.id}>
+        <div className="floor-map__character" data-seat={seat} data-layer={layer} aria-hidden="true"
+          style={{ left: `${clampedX}cqw`, top: `${offset.y}cqh` }}>
+          <CharacterSprite model={person.model} outfit={person.outfit} pose="seated" facing={facing} />
+        </div>
+        <span className="floor-map__character-name" data-seat={seat} data-self={person.id === selfId}
+          dir="auto" aria-hidden="true" style={{ left: `${labelX}cqw`, top: `${offset.y}cqh` }}>
+          {person.displayName}
+        </span>
+      </Fragment>
+    );
   });
 }
 
 export function MapView({
-  tables, mode = 'guest', currentTableId, presence, characters, selfCharacterId, selectedTableId, selectedChairId,
-  onTableClick, onChairClick, onTableDrag, onChairDrag,
+  tables, floor = 1, mode = 'guest', currentTableId, presence, characters, selfCharacterId, selectedTableId, selectedChairId,
+  onTableClick, onChairClick, onTableDrag, onChairDrag, onFloorChange,
 }: MapProps) {
   const canvas = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const editing = mode === 'editor';
+  const mapArt = floor === 2 ? '/art/cafe-floor-2.webp' : '/art/cafe.webp';
+  const nextFloor: FloorId = floor === 1 ? 2 : 1;
 
   function startDrag(event: PointerEvent<HTMLButtonElement>, table: TableLayout, chair?: Drag['chair']) {
     if (!editing || event.button !== 0 || !canvas.current) return;
@@ -103,8 +135,15 @@ export function MapView({
   }
 
   return (
-    <div className={`floor-map${editing ? ' floor-map--editor' : ''}`} ref={canvas} aria-label="Sơ đồ quán">
-      <img className="floor-map__art" src="/art/cafe.webp" alt="" draggable={false} fetchPriority="high" />
+    <div className={`floor-map${editing ? ' floor-map--editor' : ''}`} ref={canvas} aria-label={`Sơ đồ tầng ${floor}`}>
+      <img className="floor-map__art" src={mapArt} alt="" draggable={false} fetchPriority="high" />
+      {!editing && onFloorChange && (
+        <button type="button" className="floor-map__stairs" data-floor={floor}
+          aria-label={floor === 1 ? 'Lên tầng 2' : 'Xuống tầng 1'}
+          onClick={() => onFloorChange(nextFloor)}>
+          {floor === 1 ? '↑ Tầng 2' : '↓ Tầng 1'}
+        </button>
+      )}
       {tables.map((table) => {
         const current = table.id === currentTableId;
         const selected = table.id === selectedTableId;

@@ -5,7 +5,7 @@ import { api, ApiError } from './api';
 import { CharacterDialog } from './CharacterDialog';
 import { CharacterSprite } from './CharacterSprite';
 import { MapView } from './Map';
-import type { Conversation, Game, GuestProfile, JournalEntry, Layout, SocialState, TableCharacter, TableLayout, VenueActivity, VenueState } from './shared';
+import type { Conversation, FloorId, Game, GuestProfile, JournalEntry, Layout, SocialState, TableCharacter, TableLayout, VenueActivity, VenueState } from './shared';
 import './guest.css';
 
 const tabs = [
@@ -28,6 +28,7 @@ export function Guest() {
   const [venue, setVenue] = useState<VenueState>();
   const [social, setSocial] = useState(emptySocial);
   const [tab, setTab] = useState<Tab>('map');
+  const [floor, setFloor] = useState<FloorId>(1);
   const [target, setTarget] = useState<ChatTarget>();
   const [inspectId, setInspectId] = useState<string>();
   const [gameId, setGameId] = useState<string>();
@@ -37,6 +38,7 @@ export function Guest() {
   const [editingCharacter, setEditingCharacter] = useState(false);
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const socialRevision = useRef(0);
+  const syncedTableId = useRef<string | null>(null);
   const profile = venue?.profile;
   const tableId = venue?.tableId;
   const checkedIn = Boolean(tableId && profile);
@@ -44,12 +46,24 @@ export function Guest() {
   const tables = venue?.layout.tables ?? [];
   const current = tables.find((table) => table.id === tableId);
   const inspecting = tables.find((table) => table.id === inspectId);
+  const floorTables = tables.filter((table) => table.floor === floor);
   const pending = social.invites.filter((invite) => invite.direction === 'incoming').length;
   const currentCharacters = tableId ? venue?.characters?.[tableId] ?? [] : [];
   const characters = tableId && profile && !currentCharacters.some((character) => character.id === profile.id)
     ? { ...venue?.characters, [tableId]: [...currentCharacters, profile] }
     : venue?.characters;
   const joinHint = tableId ? 'Tạo nhân vật để tham gia.' : 'Quét mã QR tại bàn để tham gia.';
+
+  useEffect(() => {
+    if (!current) {
+      syncedTableId.current = null;
+      return;
+    }
+    if (syncedTableId.current !== current.id) {
+      syncedTableId.current = current.id;
+      setFloor(current.floor);
+    }
+  }, [current]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -212,8 +226,9 @@ export function Guest() {
           <span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Đóng thông báo">×</button>
         </div>}
         {tab === 'map' && (venue ? (
-          <MapView tables={tables} currentTableId={checkedIn ? tableId : null} presence={venue.presence}
-            characters={characters} selfCharacterId={profile?.id} onTableClick={setInspectId} />
+          <MapView floor={floor} tables={floorTables} currentTableId={checkedIn ? tableId : null} presence={venue.presence}
+            characters={characters} selfCharacterId={profile?.id} onTableClick={setInspectId}
+            onFloorChange={(next) => { setFloor(next); setInspectId(undefined); }} />
         ) : (
           <div className="guest-map-loading">
             <img src="/art/cafe.webp" alt="" />
@@ -304,7 +319,7 @@ function TableDialog({ table, current, checkedIn, online, people, selfId, joinHi
     <div className="table-dialog__body">
       <button className="table-dialog__close" type="button" aria-label="Đóng" onClick={close}>×</button>
       <h2 id="table-dialog-title">Bàn {table.label}</h2>
-      <p>{current && checkedIn ? 'Bạn đang ở đây' : online ? `${online} khách đang online` : 'Bàn này chưa có khách online.'}</p>
+      <p>Tầng {table.floor} · {current && checkedIn ? 'Bạn đang ở đây' : online ? `${online} khách đang online` : 'Bàn này chưa có khách online.'}</p>
       {people.length > 0 && <ul className="table-dialog__characters" aria-label="Khách tại bàn">
         {people.map((person) => <li key={person.id}>
           <CharacterSprite model={person.model} outfit={person.outfit} />
