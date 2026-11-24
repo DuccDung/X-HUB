@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { io } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
 import { api, ApiError } from './api';
 import { CharacterDialog } from './CharacterDialog';
 import { CharacterSprite } from './CharacterSprite';
+import { ChatPanel } from './ChatPanel';
+import type { ChatTarget, OnlinePerson } from './ChatPanel';
 import { MapView } from './Map';
-import type { Conversation, FloorId, Game, GuestProfile, JournalEntry, Layout, SocialState, TableCharacter, TableLayout, VenueActivity, VenueState } from './shared';
+import { loadSoundEnabled, playMessageSound, saveSoundEnabled, unlockAudio } from './sound';
+import type { ChatTypingEvent, FloorId, Game, GuestProfile, JournalEntry, Layout, SocialState, TableCharacter, TableLayout, VenueActivity, VenueState } from './shared';
 import './guest.css';
 
 const tabs = [
@@ -15,9 +19,21 @@ const tabs = [
   { id: 'journal', title: 'Nhật ký' },
 ] as const;
 type Tab = typeof tabs[number]['id'];
-type ChatTarget = { tableId: string; conversationId?: string };
-const emptySocial: SocialState = { conversations: [], invites: [], games: [] };
-const timeFormat = new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit' });
+type ChatResponse = SocialState & { conversationId: string };
+const emptySocial: SocialState = {
+  publicChat: {
+    id: 'public',
+    kind: 'public',
+    name: 'Cả quán',
+    members: [],
+    messages: [],
+    receipts: [],
+    updatedAt: new Date(0).toISOString(),
+  },
+  conversations: [],
+  invites: [],
+  games: [],
+};
 const dateFormat = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'long' });
 
 function messageOf(error: unknown) {
@@ -30,6 +46,10 @@ export function Guest() {
   const [tab, setTab] = useState<Tab>('map');
   const [floor, setFloor] = useState<FloorId>(1);
   const [target, setTarget] = useState<ChatTarget>();
+  const [groupDraftMemberIds, setGroupDraftMemberIds] = useState<string[]>();
+  const [seenMessageIds, setSeenMessageIds] = useState<Record<string, string>>({});
+  const [typingByRoom, setTypingByRoom] = useState<Record<string, Record<string, string>>>({});
+  const [soundEnabled, setSoundEnabled] = useState(() => loadSoundEnabled());
   const [inspectId, setInspectId] = useState<string>();
   const [gameId, setGameId] = useState<string>();
   const [notice, setNotice] = useState('');
@@ -39,9 +59,25 @@ export function Guest() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const socialRevision = useRef(0);
   const syncedTableId = useRef<string | null>(null);
+  const initializedPublicSeen = useRef(false);
+  const socketRef = useRef<Socket | null>(null);
+  const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const knownMessageIds = useRef<Set<string>>(new Set());
+  const seededKnownMessages = useRef(false);
+  const sentSeenRef = useRef<Record<string, string>>({});
+  const soundEnabledRef = useRef(soundEnabled);
+  const tabRef = useRef(tab);
+  const targetRef = useRef(target);
+  const selfIdRef = useRef<string | undefined>(undefined);
+  const checkedInRef = useRef(false);
   const profile = venue?.profile;
   const tableId = venue?.tableId;
   const checkedIn = Boolean(tableId && profile);
+  soundEnabledRef.current = soundEnabled;
+  tabRef.current = tab;
+  targetRef.current = target;
+  selfIdRef.current = profile?.id;
+  checkedInRef.current = checkedIn;
   const showCharacterDialog = Boolean(tableId && (editingCharacter || (!profile && !onboardingDismissed)));
   const tables = venue?.layout.tables ?? [];
   const current = tables.find((table) => table.id === tableId);
@@ -53,6 +89,25 @@ export function Guest() {
     ? { ...venue?.characters, [tableId]: [...currentCharacters, profile] }
     : venue?.characters;
   const joinHint = tableId ? 'Tạo nhân vật để tham gia.' : 'Quét mã QR tại bàn để tham gia.';
+
+  const onlinePeople: OnlinePerson[] = [];
+  const seenOnline = new Set<string>();
+  for (const table of tables) {
+    for (const person of characters?.[table.id] ?? []) {
+      if (person.id === profile?.id || seenOnline.has(person.id)) continue;
+      seenOnline.add(person.id);
+      onlinePeople.push({ ...person, tableId: table.id, tableLabel: table.label, floor: table.floor });
+    }
+  }
+
+  const unreadIds = new Set<string>();
+  for (const room of [social.publicChat, ...social.conversations]) {
+    const last = room.messages.at(-1);
+    if (last && !last.mine && seenMessageIds[room.id] !== last.id) {
+      unreadIds.add(room.id);
+    }
+  }
+  const unreadChats = unreadIds.size;
 
   useEffect(() => {
     if (!current) {
@@ -94,20 +149,122 @@ export function Guest() {
     return () => controller.abort();
   }, [loadAttempt]);
 
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener('pointerdown', unlock, { once: true, passive: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, []);
+
   const reloadSocial = useCallback(async () => {
     const revision = ++socialRevision.current;
     try {
       const next = await api<SocialState>('/api/social');
-      if (revision === socialRevision.current) setSocial(next);
+      if (revision === socialRevision.current) {
+        const allRooms = [next.publicChat, ...next.conversations];
+        if (!seededKnownMessages.current) {
+          seededKnownMessages.current = true;
+          for (const room of allRooms) {
+            for (const msg of room.messages) knownMessageIds.current.add(msg.id);
+          }
+        } else {
+          let incomingRoomId: string | null = null;
+          for (const room of allRooms) {
+            for (const msg of room.messages) {
+              if (!knownMessageIds.current.has(msg.id)) {
+                knownMessageIds.current.add(msg.id);
+                if (!msg.mine) incomingRoomId = room.id;
+              }
+            }
+          }
+          if (incomingRoomId && soundEnabledRef.current) {
+            const activeTarget = targetRef.current;
+            const viewingSameRoom = document.visibilityState === 'visible'
+              && tabRef.current === 'chat'
+              && (
+                (incomingRoomId === 'public' && activeTarget?.kind === 'public')
+                || (activeTarget?.kind === 'conversation' && activeTarget.conversationId === incomingRoomId)
+              );
+            playMessageSound(viewingSameRoom);
+          }
+        }
+
+        setSocial(next);
+        if (!initializedPublicSeen.current) {
+          initializedPublicSeen.current = true;
+          const publicLastId = next.publicChat.messages.at(-1)?.id;
+          if (publicLastId) {
+            setSeenMessageIds((previous) => (previous.public ? previous : { ...previous, public: publicLastId }));
+          }
+        }
+      }
     } catch {
       // Socket.IO retries the connection and fetches again on reconnect.
     }
+  }, []);
+
+  const markSeen = useCallback((conversationId: string, lastMessageId?: string) => {
+    if (!lastMessageId) return;
+    setSeenMessageIds((previous) => (
+      previous[conversationId] === lastMessageId ? previous : { ...previous, [conversationId]: lastMessageId }
+    ));
+    if (!checkedInRef.current || conversationId === 'public' || document.visibilityState !== 'visible') return;
+    if (sentSeenRef.current[conversationId] === lastMessageId) return;
+    sentSeenRef.current[conversationId] = lastMessageId;
+    void api(`/api/chat/${conversationId}/seen`, {
+      method: 'POST',
+      body: JSON.stringify({ messageId: lastMessageId }),
+    }).catch(() => {
+      if (sentSeenRef.current[conversationId] === lastMessageId) {
+        delete sentSeenRef.current[conversationId];
+      }
+    });
+  }, []);
+
+  const sendTyping = useCallback((conversationId: string, typing: boolean) => {
+    socketRef.current?.emit('chat:typing', { conversationId, typing });
+  }, []);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((current) => {
+      const next = !current;
+      saveSoundEnabled(next);
+      if (next) {
+        unlockAudio();
+        playMessageSound(true);
+      }
+      return next;
+    });
   }, []);
 
   const hasVenue = Boolean(venue);
   useEffect(() => {
     if (!hasVenue) return;
     const socket = io();
+    socketRef.current = socket;
+
+    const clearTypingEntry = (conversationId: string, userId: string) => {
+      const key = `${conversationId}:${userId}`;
+      const existing = typingTimers.current.get(key);
+      if (existing) {
+        clearTimeout(existing);
+        typingTimers.current.delete(key);
+      }
+      setTypingByRoom((previous) => {
+        const room = previous[conversationId];
+        if (!room || !(userId in room)) return previous;
+        const { [userId]: _removed, ...rest } = room;
+        if (Object.keys(rest).length === 0) {
+          const { [conversationId]: _empty, ...nextRooms } = previous;
+          return nextRooms;
+        }
+        return { ...previous, [conversationId]: rest };
+      });
+    };
+
     socket.on('connect', () => {
       void api<VenueState>('/api/venue').then((next) => {
         setVenue((previous) => {
@@ -118,6 +275,11 @@ export function Guest() {
         });
       }).catch(() => {});
       void reloadSocial();
+    });
+    socket.on('disconnect', () => {
+      for (const timer of typingTimers.current.values()) clearTimeout(timer);
+      typingTimers.current.clear();
+      setTypingByRoom({});
     });
     socket.on('venue:activity', (activity: VenueActivity) => {
       setVenue((previous) => previous && { ...previous, ...activity });
@@ -137,7 +299,30 @@ export function Guest() {
       void reloadSocial();
     });
     socket.on('social:changed', () => void reloadSocial());
-    return () => { socket.disconnect(); };
+    socket.on('chat:typing', (event: ChatTypingEvent) => {
+      if (!event?.conversationId || !event.userId || event.userId === selfIdRef.current) return;
+      if (!event.typing) {
+        clearTypingEntry(event.conversationId, event.userId);
+        return;
+      }
+      const key = `${event.conversationId}:${event.userId}`;
+      const existing = typingTimers.current.get(key);
+      if (existing) clearTimeout(existing);
+      typingTimers.current.set(key, setTimeout(() => clearTypingEntry(event.conversationId, event.userId), 5000));
+      setTypingByRoom((previous) => ({
+        ...previous,
+        [event.conversationId]: {
+          ...previous[event.conversationId],
+          [event.userId]: event.displayName,
+        },
+      }));
+    });
+    return () => {
+      for (const timer of typingTimers.current.values()) clearTimeout(timer);
+      typingTimers.current.clear();
+      socketRef.current = null;
+      socket.disconnect();
+    };
   }, [hasVenue, reloadSocial]);
 
   function openCharacter() {
@@ -180,6 +365,24 @@ export function Guest() {
     }
   }
 
+  async function chatAction(path: string, body: object): Promise<string | null> {
+    if (busy) return null;
+    setBusy(true);
+    setNotice('');
+    try {
+      const { conversationId, ...next } = await api<ChatResponse>(path, { method: 'POST', body: JSON.stringify(body) });
+      socialRevision.current += 1;
+      setSocial(next);
+      void reloadSocial();
+      return conversationId;
+    } catch (error) {
+      setNotice(messageOf(error));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function selectTab(next: Tab) {
     setTab(next);
     setNotice('');
@@ -191,9 +394,26 @@ export function Guest() {
     return tables.find((table) => table.id === id)?.label ?? 'đã rời sơ đồ';
   }
 
-  function startChat(tableId: string) {
+  function floorOf(id: string): FloorId | undefined {
+    return tables.find((table) => table.id === id)?.floor;
+  }
+
+  function startDirectChat(person: TableCharacter, targetTableId: string) {
     selectTab('chat');
-    setTarget({ tableId });
+    const existing = social.conversations.find((item) =>
+      item.kind === 'direct' && item.members.some((member) => member.id === person.id),
+    );
+    if (existing) {
+      setTarget({ kind: 'conversation', conversationId: existing.id });
+    } else {
+      setTarget({ kind: 'direct', recipientId: person.id, recipientName: person.displayName, tableId: targetTableId });
+    }
+  }
+
+  function startGroupWithPeople(memberIds: string[]) {
+    selectTab('chat');
+    setTarget(undefined);
+    setGroupDraftMemberIds(memberIds);
   }
 
   async function invite(tableId: string) {
@@ -201,15 +421,12 @@ export function Guest() {
     await socialAction('/api/caro/invite', { tableId });
   }
 
-  const activeConversation = target && (target.conversationId
-    ? social.conversations.find((conversation) => conversation.id === target.conversationId)
-    : social.conversations.find((conversation) => conversation.tableId === target.tableId));
   const activeGame = social.games.find((game) => game.id === gameId)
     ?? social.games.find((game) => !game.winner) ?? social.games[0];
 
   return (
     <div className="guest-shell">
-      <header className="guest-header">
+      {tab !== 'chat' && <header className="guest-header">
         <button className="guest-brand" aria-label="Xưởng Caffe, về sơ đồ" onClick={() => selectTab('map')}>
           <img src="/art/brand.webp" alt="" width="45" height="45" />
           <span>Xưởng Caffe</span>
@@ -219,7 +436,7 @@ export function Guest() {
           <span className="guest-seat__pin" aria-hidden="true" />
           <span className="guest-seat__label">{profile ? `Bàn ${current.label}` : 'Tạo nhân vật'}</span>
         </button>}
-      </header>
+      </header>}
 
       <main className={`guest-main guest-main--${tab}`}>
         {notice && <div className="guest-notice" role="status">
@@ -236,14 +453,33 @@ export function Guest() {
           </div>
         ))}
 
-        {tab === 'chat' && <ChatPanel conversations={social.conversations} active={activeConversation || undefined}
-          target={target} checkedIn={checkedIn} joinHint={joinHint} labelOf={labelOf} busy={busy} goMap={() => selectTab('map')}
-          selectConversation={(conversation) => setTarget({ tableId: conversation.tableId, conversationId: conversation.id })}
-          closeConversation={() => setTarget(undefined)}
-          send={async (text) => {
-            if (!target) return false;
-            return socialAction('/api/chat', { tableId: target.tableId, conversationId: activeConversation?.id, text });
-          }} />}
+        {tab === 'chat' && <ChatPanel
+          publicChat={social.publicChat}
+          conversations={social.conversations}
+          onlinePeople={onlinePeople}
+          selfId={profile?.id}
+          checkedIn={checkedIn}
+          hasSeat={Boolean(tableId)}
+          joinHint={joinHint}
+          target={target}
+          onSelectTarget={setTarget}
+          labelOf={labelOf}
+          floorOf={floorOf}
+          busy={busy}
+          unreadIds={unreadIds}
+          typingByRoom={typingByRoom}
+          soundEnabled={soundEnabled}
+          onToggleSound={toggleSound}
+          onTyping={sendTyping}
+          onMarkSeen={markSeen}
+          onOpenCharacter={openCharacter}
+          onSend={(payload) => chatAction('/api/chat', payload)}
+          onCreateGroup={(name, memberIds) => chatAction('/api/chat/groups', { name, memberIds })}
+          onAddGroupMembers={(conversationId, memberIds) => socialAction(`/api/chat/groups/${conversationId}/members`, { memberIds })}
+          onLeaveGroup={(conversationId) => socialAction(`/api/chat/groups/${conversationId}/leave`, {})}
+          groupDraftMemberIds={groupDraftMemberIds}
+          onClearGroupDraft={() => setGroupDraftMemberIds(undefined)}
+        />}
 
         {tab === 'caro' && <section className="guest-panel" aria-labelledby="caro-title">
           <PanelTitle icon="caro" title="Caro" id="caro-title" />
@@ -280,6 +516,7 @@ export function Guest() {
         {tabs.map((item) => <button key={item.id} type="button" aria-current={tab === item.id ? 'page' : undefined}
           className="guest-nav__tab" onClick={() => selectTab(item.id)}>
           <span className="guest-nav__sprite"><img src={`/art/${item.id}.webp`} alt="" width="45" height="45" />
+            {item.id === 'chat' && unreadChats > 0 && <span className="guest-nav__count" aria-label={`${unreadChats} tin nhắn mới`}>{unreadChats}</span>}
             {item.id === 'caro' && pending > 0 && <span className="guest-nav__count" aria-label={`${pending} lời mời`}>{pending}</span>}
           </span>
           <span>{item.title}</span>
@@ -289,7 +526,9 @@ export function Guest() {
       {inspecting && !showCharacterDialog && <TableDialog table={inspecting} current={inspecting.id === current?.id} checkedIn={checkedIn}
         online={venue?.presence[inspecting.id] ?? 0} people={characters?.[inspecting.id] ?? []} selfId={profile?.id}
         joinHint={joinHint} close={() => setInspectId(undefined)} edit={openCharacter}
-        chat={() => startChat(inspecting.id)} invite={() => void invite(inspecting.id)} />}
+        chatPerson={(person) => startDirectChat(person, inspecting.id)}
+        createGroup={(memberIds) => startGroupWithPeople(memberIds)}
+        invite={() => void invite(inspecting.id)} />}
       {showCharacterDialog && <CharacterDialog profile={profile} onSave={saveCharacter} onClose={closeCharacter} />}
     </div>
   );
@@ -303,12 +542,16 @@ function GuestEmpty({ text, goMap }: { text: string; goMap: () => void }) {
   return <div className="guest-empty"><p>{text}</p><button className="btn" onClick={goMap}>Mở sơ đồ</button></div>;
 }
 
-function TableDialog({ table, current, checkedIn, online, people, selfId, joinHint, close, edit, chat, invite }: {
+function TableDialog({ table, current, checkedIn, online, people, selfId, joinHint, close, edit, chatPerson, createGroup, invite }: {
   table: TableLayout; current: boolean; checkedIn: boolean; online: number;
   people: TableCharacter[]; selfId?: string; joinHint: string;
-  close: () => void; edit: () => void; chat: () => void; invite: () => void;
+  close: () => void; edit: () => void;
+  chatPerson: (person: TableCharacter) => void;
+  createGroup: (memberIds: string[]) => void;
+  invite: () => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const otherPeople = people.filter((person) => person.id !== selfId);
   useEffect(() => {
     const node = dialog.current;
     node?.showModal();
@@ -323,67 +566,26 @@ function TableDialog({ table, current, checkedIn, online, people, selfId, joinHi
       {people.length > 0 && <ul className="table-dialog__characters" aria-label="Khách tại bàn">
         {people.map((person) => <li key={person.id}>
           <CharacterSprite model={person.model} outfit={person.outfit} />
-          <span>{person.displayName}{person.id === selfId && <small> · Bạn</small>}</span>
+          <span className="table-dialog__person-name">{person.displayName}{person.id === selfId && <small> · Bạn</small>}</span>
+          {checkedIn && person.id !== selfId && (
+            <button className="table-dialog__dm" type="button" onClick={() => chatPerson(person)}>Nhắn 1v1</button>
+          )}
         </li>)}
       </ul>}
       {current && <div className="table-dialog__actions">
         <button className="btn btn--green" type="button" onClick={edit}>{checkedIn ? 'Chỉnh nhân vật' : 'Tạo nhân vật'}</button>
       </div>}
-      {checkedIn && !current && online > 0 && <div className="table-dialog__actions">
-        <button className="btn btn--green" type="button" onClick={chat}><img src="/art/chat.webp" alt="" />Nhắn tin</button>
+      {checkedIn && !current && otherPeople.length > 0 && <div className="table-dialog__actions">
+        {otherPeople.length === 1 ? (
+          <button className="btn btn--green" type="button" onClick={() => chatPerson(otherPeople[0])}><img src="/art/chat.webp" alt="" />Nhắn 1v1</button>
+        ) : (
+          <button className="btn btn--green" type="button" onClick={() => createGroup(otherPeople.map((person) => person.id))}><img src="/art/chat.webp" alt="" />Tạo nhóm với bàn</button>
+        )}
         <button className="btn" type="button" onClick={invite}><img src="/art/caro.webp" alt="" />Mời chơi caro</button>
       </div>}
       {!checkedIn && !current && <p>{joinHint}</p>}
     </div>
   </dialog>;
-}
-
-function ChatPanel({ conversations, active, target, checkedIn, joinHint, labelOf, busy, goMap, send, selectConversation, closeConversation }: {
-  conversations: Conversation[]; active?: Conversation; target?: ChatTarget; checkedIn: boolean; busy: boolean;
-  joinHint: string;
-  labelOf: (id: string) => string; goMap: () => void; send: (text: string) => Promise<boolean>;
-  selectConversation: (conversation: Conversation) => void; closeConversation: () => void;
-}) {
-  const [text, setText] = useState('');
-  const end = useRef<HTMLSpanElement>(null);
-  useEffect(() => { setText(''); }, [target?.tableId, target?.conversationId]);
-  useEffect(() => {
-    if (end.current?.parentElement) end.current.parentElement.scrollTop = end.current.parentElement.scrollHeight;
-  }, [active?.messages]);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const value = text.trim();
-    if (value && await send(value)) setText('');
-  }
-
-  return <section className="guest-panel" aria-labelledby="chat-title">
-    <PanelTitle icon="chat" title="Chat" id="chat-title" />
-    {target ? <div className="chat-thread">
-      <div className="chat-thread__header">
-        <strong>Bàn {labelOf(target.tableId)}</strong>
-        <button className="btn" onClick={closeConversation}>Cuộc trò chuyện</button>
-      </div>
-      <div className="chat-thread__messages" role="log" aria-label="Tin nhắn">
-        {!active?.messages.length && <p className="chat-thread__empty">Gửi lời chào đến bàn {labelOf(target.tableId)}.</p>}
-        {active?.messages.map((message) => <div key={message.id} className={`chat-message${message.mine ? ' chat-message--mine' : ''}`}>
-          <p>{message.text}</p><time dateTime={message.createdAt}>{timeFormat.format(new Date(message.createdAt))}</time>
-        </div>)}
-        <span ref={end} />
-      </div>
-      <form className="chat-thread__compose" onSubmit={submit}>
-        <input value={text} onChange={(event) => setText(event.target.value)} placeholder="Viết tin nhắn…" aria-label="Tin nhắn" maxLength={500} disabled={!checkedIn} />
-        <button className="btn btn--green" disabled={busy || !text.trim() || !checkedIn}>Gửi</button>
-      </form>
-    </div> : conversations.length ? <ul className="conversation-list">
-      {conversations.map((conversation) => <li key={conversation.id}>
-        <button className="guest-card conversation-row" onClick={() => selectConversation(conversation)}>
-          <img src="/art/chat.webp" alt="" width="36" height="36" />
-          <span><strong>Bàn {labelOf(conversation.tableId)}</strong><small>{conversation.messages.at(-1)?.text}</small></span>
-        </button>
-      </li>)}
-    </ul> : <GuestEmpty text={checkedIn ? 'Chọn một bàn đang online để bắt chuyện.' : joinHint} goMap={goMap} />}
-  </section>;
 }
 
 function CaroBoard({ game, label, busy, move }: { game: Game; label: string; busy: boolean; move: (index: number) => void }) {

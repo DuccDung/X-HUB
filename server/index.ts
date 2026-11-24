@@ -6,10 +6,11 @@ import cookie from '@fastify/cookie'
 import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import { Server } from 'socket.io'
-import type { TableCharacter, VenueActivity, VenueState } from '../src/shared.ts'
+import type { ChatTypingEvent, TableCharacter, VenueActivity, VenueState } from '../src/shared.ts'
 import { AppError, object, openDatabase, parseProfile, parseTables } from './database.ts'
 import type { Guest } from './database.ts'
 import { createSocial } from './social.ts'
+import type { OnlineProfile, SocialMember } from './social.ts'
 
 const guestCookie = 'xc_guest'
 const adminCookie = 'xc_admin'
@@ -55,12 +56,33 @@ function onlineGuests(tableId: string): string[] {
   return [...live.entries()].filter(([, visitor]) => visitor.tableId === tableId && visitor.guest.profile).map(([id]) => id)
 }
 
+function onlineProfiles(): OnlineProfile[] {
+  const list: OnlineProfile[] = []
+  for (const [guestId, visitor] of live) {
+    if (!visitor.tableId || !visitor.guest.profile) continue
+    list.push({
+      guestId,
+      publicId: visitor.guest.profile.id,
+      displayName: visitor.guest.profile.displayName,
+      tableId: visitor.tableId,
+    })
+  }
+  return list
+}
+
 function guestRoom(guestId: string): string {
   return `visitor:${guestId}`
 }
 
-const social = createSocial(onlineGuests, (guests) => {
-  for (const id of guests) io.to(guestRoom(id)).emit('social:changed')
+const social = createSocial({
+  onlineGuests,
+  onlineProfiles,
+  notify: (guests) => {
+    for (const id of guests) io.to(guestRoom(id)).emit('social:changed')
+  },
+  notifyAll: () => {
+    io.emit('social:changed')
+  },
 })
 
 function broadcastActivity() {
@@ -93,6 +115,16 @@ function refreshSeats(now = Date.now()) {
   if (changed) broadcastActivity()
 }
 
+function emitTyping(senderGuestId: string, payload: ChatTypingEvent) {
+  const targets = social.recipientGuestIds(senderGuestId, payload.conversationId)
+  if (!targets) return
+  if (targets === 'all') {
+    io.except(guestRoom(senderGuestId)).emit('chat:typing', payload)
+  } else {
+    for (const id of targets) io.to(guestRoom(id)).emit('chat:typing', payload)
+  }
+}
+
 io.on('connection', (socket) => {
   const cookies = app.parseCookie(socket.request.headers.cookie ?? '')
   const guest = database.guest(cookies[guestCookie])
@@ -105,7 +137,54 @@ io.on('connection', (socket) => {
     live.set(guest.id, current)
     void socket.join(guestRoom(guest.id))
     changed = updateLiveSeat(current)
+
+    const typingTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    let lastTypingPing = 0
+
+    const clearTypingFor = (conversationId: string) => {
+      const existingTimer = typingTimers.get(conversationId)
+      if (!existingTimer) return
+      clearTimeout(existingTimer)
+      typingTimers.delete(conversationId)
+      const profile = current.guest.profile
+      if (profile) {
+        emitTyping(guest.id, {
+          conversationId,
+          userId: profile.id,
+          displayName: profile.displayName,
+          typing: false,
+        })
+      }
+    }
+
+    socket.on('chat:typing', (raw: unknown) => {
+      if (typeof raw !== 'object' || raw === null) return
+      const { conversationId, typing } = raw as { conversationId?: unknown; typing?: unknown }
+      if (typeof conversationId !== 'string' || !conversationId || conversationId.length > 64 || typeof typing !== 'boolean') return
+      const profile = current.guest.profile
+      if (!current.tableId || !profile) return
+
+      if (!typing) {
+        clearTypingFor(conversationId)
+        return
+      }
+      const now = Date.now()
+      if (now - lastTypingPing < 250 && typingTimers.has(conversationId)) return
+      lastTypingPing = now
+
+      const prev = typingTimers.get(conversationId)
+      if (prev) clearTimeout(prev)
+      typingTimers.set(conversationId, setTimeout(() => clearTypingFor(conversationId), 4000))
+      emitTyping(guest.id, {
+        conversationId,
+        userId: profile.id,
+        displayName: profile.displayName,
+        typing: true,
+      })
+    })
+
     socket.on('disconnect', () => {
+      for (const conversationId of [...typingTimers.keys()]) clearTypingFor(conversationId)
       current.sockets--
       if (current.sockets) return
       live.delete(guest.id)
@@ -140,10 +219,10 @@ function seatedGuest(request: FastifyRequest) {
   return { guest, tableId }
 }
 
-function checkedIn(request: FastifyRequest) {
+function checkedIn(request: FastifyRequest): SocialMember {
   const { guest, tableId } = seatedGuest(request)
   if (!guest.profile) throw new AppError(403, 'Hãy tạo nhân vật để tham gia.')
-  return { id: guest.id, tableId }
+  return { id: guest.id, publicId: guest.profile.id, displayName: guest.profile.displayName, tableId }
 }
 
 function visitor(request: FastifyRequest) {
@@ -264,13 +343,48 @@ app.get('/api/social', async (request) => {
   social.sweep()
   const guest = currentGuest(request)
   const tableId = database.activeTable(guest)
-  return social.state(guest?.profile && tableId ? { id: guest.id, tableId } : null)
+  return social.state(guest?.profile && tableId
+    ? { id: guest.id, publicId: guest.profile.id, displayName: guest.profile.displayName, tableId }
+    : null)
 })
 app.post('/api/chat', async (request) => {
   const member = checkedIn(request)
-  const { tableId, text, conversationId } = object(request.body)
+  const { conversationId, recipientId, text } = object(request.body)
   social.sweep()
-  social.sendChat(member, tableId, text, conversationId)
+  const id = social.sendChat(member, { conversationId, recipientId, text })
+  emitTyping(member.id, {
+    conversationId: id,
+    userId: member.publicId,
+    displayName: member.displayName,
+    typing: false,
+  })
+  return { ...social.state(member), conversationId: id }
+})
+app.post<{ Params: { id: string } }>('/api/chat/:id/seen', async (request) => {
+  const member = checkedIn(request)
+  const { messageId } = object(request.body)
+  social.sweep()
+  social.markSeen(member, request.params.id, messageId)
+  return { ok: true }
+})
+app.post('/api/chat/groups', async (request, reply) => {
+  const member = checkedIn(request)
+  const { name, memberIds } = object(request.body)
+  social.sweep()
+  const id = social.createGroup(member, name, memberIds)
+  return reply.code(201).send({ ...social.state(member), conversationId: id })
+})
+app.post<{ Params: { id: string } }>('/api/chat/groups/:id/members', async (request) => {
+  const member = checkedIn(request)
+  const { memberIds } = object(request.body)
+  social.sweep()
+  social.addGroupMembers(member, request.params.id, memberIds)
+  return social.state(member)
+})
+app.post<{ Params: { id: string } }>('/api/chat/groups/:id/leave', async (request) => {
+  const member = checkedIn(request)
+  social.sweep()
+  social.leaveGroup(member, request.params.id)
   return social.state(member)
 })
 app.post('/api/caro/invite', async (request) => {

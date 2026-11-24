@@ -72,10 +72,48 @@ export interface AdminLayout {
   qrs: Record<string, string>;
 }
 
+export type ChatKind = 'public' | 'direct' | 'group';
+
+export interface ChatParticipant {
+  id: string;
+  displayName: string;
+  tableId: string;
+  online: boolean;
+}
+
+export interface ChatMessage {
+  id: string;
+  text: string;
+  mine: boolean;
+  authorId: string;
+  authorName: string;
+  tableId: string;
+  createdAt: string;
+}
+
+export interface ChatReceipt {
+  userId: string;
+  displayName: string;
+  messageId: string;
+  seenAt: string;
+}
+
+export interface ChatTypingEvent {
+  conversationId: string;
+  userId: string;
+  displayName: string;
+  typing: boolean;
+}
+
 export interface Conversation {
   id: string;
-  tableId: string;
-  messages: { id: string; text: string; mine: boolean; tableId: string; createdAt: string }[];
+  kind: ChatKind;
+  name: string;
+  tableId?: string;
+  members: ChatParticipant[];
+  messages: ChatMessage[];
+  receipts: ChatReceipt[];
+  updatedAt: string;
 }
 
 export interface Invite {
@@ -97,6 +135,7 @@ export interface Game {
 }
 
 export interface SocialState {
+  publicChat: Conversation;
   conversations: Conversation[];
   invites: Invite[];
   games: Game[];
