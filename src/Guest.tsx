@@ -3,13 +3,35 @@ import type { FormEvent } from 'react';
 import { io } from 'socket.io-client';
 import type { Socket } from 'socket.io-client';
 import { api, ApiError } from './api';
+import { CaroPanel } from './CaroPanel';
 import { CharacterDialog } from './CharacterDialog';
 import { CharacterSprite } from './CharacterSprite';
 import { ChatPanel } from './ChatPanel';
 import type { ChatTarget, OnlinePerson } from './ChatPanel';
 import { MapView } from './Map';
-import { loadSoundEnabled, playMessageSound, saveSoundEnabled, unlockAudio } from './sound';
-import type { ChatTypingEvent, FloorId, Game, GuestProfile, JournalEntry, Layout, SocialState, TableCharacter, TableLayout, VenueActivity, VenueState } from './shared';
+import {
+  loadSoundEnabled,
+  playCaroInviteSound,
+  playCaroMoveSound,
+  playCaroWinSound,
+  playMessageSound,
+  saveSoundEnabled,
+  unlockAudio,
+} from './sound';
+import type {
+  CaroEmoji,
+  CaroEmojiEvent,
+  ChatTypingEvent,
+  FloorId,
+  GuestProfile,
+  JournalEntry,
+  Layout,
+  SocialState,
+  TableCharacter,
+  TableLayout,
+  VenueActivity,
+  VenueState,
+} from './shared';
 import './guest.css';
 
 const tabs = [
@@ -20,6 +42,7 @@ const tabs = [
 ] as const;
 type Tab = typeof tabs[number]['id'];
 type ChatResponse = SocialState & { conversationId: string };
+type RematchResponse = SocialState & { gameId: string };
 const emptySocial: SocialState = {
   publicChat: {
     id: 'public',
@@ -52,6 +75,7 @@ export function Guest() {
   const [soundEnabled, setSoundEnabled] = useState(() => loadSoundEnabled());
   const [inspectId, setInspectId] = useState<string>();
   const [gameId, setGameId] = useState<string>();
+  const [incomingCaroEmoji, setIncomingCaroEmoji] = useState<(CaroEmojiEvent & { seq: number }) | null>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -64,6 +88,11 @@ export function Guest() {
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const knownMessageIds = useRef<Set<string>>(new Set());
   const seededKnownMessages = useRef(false);
+  const caroEmojiSeq = useRef(0);
+  const prevCaroRef = useRef<{
+    incomingInviteIds: Set<string>;
+    games: Map<string, { lastMove: number | null; winner: string | null }>;
+  } | null>(null);
   const sentSeenRef = useRef<Record<string, string>>({});
   const soundEnabledRef = useRef(soundEnabled);
   const tabRef = useRef(tab);
@@ -84,6 +113,8 @@ export function Guest() {
   const inspecting = tables.find((table) => table.id === inspectId);
   const floorTables = tables.filter((table) => table.floor === floor);
   const pending = social.invites.filter((invite) => invite.direction === 'incoming').length;
+  const myTurnCaroCount = social.games.filter((game) => !game.winner && game.turn === game.mine).length;
+  const caroBadgeCount = pending + (tab !== 'caro' ? myTurnCaroCount : 0);
   const currentCharacters = tableId ? venue?.characters?.[tableId] ?? [] : [];
   const characters = tableId && profile && !currentCharacters.some((character) => character.id === profile.id)
     ? { ...venue?.characters, [tableId]: [...currentCharacters, profile] }
@@ -192,6 +223,40 @@ export function Guest() {
           }
         }
 
+        const nextIncomingInvites = new Set(
+          next.invites.filter((item) => item.direction === 'incoming').map((item) => item.id),
+        );
+        const nextGameSnap = new Map(
+          next.games.map((g) => [g.id, { lastMove: g.lastMove, winner: g.winner }]),
+        );
+        const prevCaro = prevCaroRef.current;
+        if (prevCaro && soundEnabledRef.current) {
+          let playedCaroSound = false;
+          for (const id of nextIncomingInvites) {
+            if (!prevCaro.incomingInviteIds.has(id)) {
+              playCaroInviteSound();
+              playedCaroSound = true;
+              break;
+            }
+          }
+          if (!playedCaroSound) {
+            for (const g of next.games) {
+              const prev = prevCaro.games.get(g.id);
+              if (g.winner && (!prev || !prev.winner)) {
+                playCaroWinSound(g.winner === g.mine);
+                playedCaroSound = true;
+                break;
+              }
+              if (prev && g.lastMove !== prev.lastMove && g.lastMove !== null && g.turn === g.mine) {
+                playCaroMoveSound(false);
+                playedCaroSound = true;
+                break;
+              }
+            }
+          }
+        }
+        prevCaroRef.current = { incomingInviteIds: nextIncomingInvites, games: nextGameSnap };
+
         setSocial(next);
         if (!initializedPublicSeen.current) {
           initializedPublicSeen.current = true;
@@ -226,6 +291,10 @@ export function Guest() {
 
   const sendTyping = useCallback((conversationId: string, typing: boolean) => {
     socketRef.current?.emit('chat:typing', { conversationId, typing });
+  }, []);
+
+  const sendCaroEmoji = useCallback((caroGameId: string, emoji: CaroEmoji) => {
+    socketRef.current?.emit('caro:emoji', { gameId: caroGameId, emoji });
   }, []);
 
   const toggleSound = useCallback(() => {
@@ -299,6 +368,10 @@ export function Guest() {
       void reloadSocial();
     });
     socket.on('social:changed', () => void reloadSocial());
+    socket.on('caro:emoji', (event: CaroEmojiEvent) => {
+      if (!event?.gameId || !event.emoji) return;
+      setIncomingCaroEmoji({ ...event, seq: ++caroEmojiSeq.current });
+    });
     socket.on('chat:typing', (event: ChatTypingEvent) => {
       if (!event?.conversationId || !event.userId || event.userId === selfIdRef.current) return;
       if (!event.typing) {
@@ -416,17 +489,40 @@ export function Guest() {
     setGroupDraftMemberIds(memberIds);
   }
 
-  async function invite(tableId: string) {
+  async function inviteTable(tableId: string) {
     selectTab('caro');
     await socialAction('/api/caro/invite', { tableId });
   }
 
-  const activeGame = social.games.find((game) => game.id === gameId)
-    ?? social.games.find((game) => !game.winner) ?? social.games[0];
+  async function invitePerson(recipientId: string, openCaroTab = false) {
+    if (openCaroTab) selectTab('caro');
+    return socialAction('/api/caro/invite', { recipientId });
+  }
+
+  async function rematchCaro(targetGameId: string): Promise<string | null> {
+    if (busy) return null;
+    setBusy(true);
+    setNotice('');
+    try {
+      const { gameId: nextId, ...next } = await api<RematchResponse>(`/api/caro/games/${targetGameId}/rematch`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      socialRevision.current += 1;
+      setSocial(next);
+      void reloadSocial();
+      return nextId;
+    } catch (error) {
+      setNotice(messageOf(error));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="guest-shell">
-      {tab !== 'chat' && <header className="guest-header">
+      {tab !== 'chat' && tab !== 'caro' && <header className="guest-header">
         <button className="guest-brand" aria-label="Xưởng Caffe, về sơ đồ" onClick={() => selectTab('map')}>
           <img src="/art/brand.webp" alt="" width="45" height="45" />
           <span>Xưởng Caffe</span>
@@ -481,33 +577,33 @@ export function Guest() {
           onClearGroupDraft={() => setGroupDraftMemberIds(undefined)}
         />}
 
-        {tab === 'caro' && <section className="guest-panel" aria-labelledby="caro-title">
-          <PanelTitle icon="caro" title="Caro" id="caro-title" />
-          {social.invites.length > 0 && <ul className="invite-list" aria-label="Lời mời chơi">
-            {social.invites.map((challenge) => <li className="guest-card" key={challenge.id}>
-              <div><strong>Bàn {labelOf(challenge.tableId)}</strong>
-                <p>{challenge.direction === 'incoming' ? 'Mời bạn chơi caro' : 'Đang chờ trả lời'}</p></div>
-              <div className="guest-actions">
-                <button className="btn" disabled={busy} onClick={() => void socialAction(`/api/caro/invites/${challenge.id}`, { accept: false })}>
-                  {challenge.direction === 'incoming' ? 'Từ chối' : 'Hủy lời mời'}
-                </button>
-                {challenge.direction === 'incoming' && <button className="btn btn--green" disabled={busy}
-                  onClick={async () => {
-                    if (await socialAction(`/api/caro/invites/${challenge.id}`, { accept: true })) setGameId(undefined);
-                  }}>Chấp nhận</button>}
-              </div>
-            </li>)}
-          </ul>}
-          {activeGame ? <>
-            {social.games.length > 1 && <label className="field-label">Chọn ván
-              <select value={activeGame.id} onChange={(event) => setGameId(event.target.value)}>
-                {social.games.map((game) => <option key={game.id} value={game.id}>Bàn {labelOf(game.tableId)} · {game.winner ? 'Đã kết thúc' : 'Đang chơi'}</option>)}
-              </select>
-            </label>}
-            <CaroBoard game={activeGame} label={labelOf(activeGame.tableId)} busy={busy}
-              move={(index) => void socialAction(`/api/caro/games/${activeGame.id}/move`, { index })} />
-          </> : !social.invites.length && <GuestEmpty text={checkedIn ? 'Chọn một bàn đang online để mời chơi.' : joinHint} goMap={() => selectTab('map')} />}
-        </section>}
+        {tab === 'caro' && <CaroPanel
+          invites={social.invites}
+          games={social.games}
+          onlinePeople={onlinePeople}
+          checkedIn={checkedIn}
+          hasSeat={Boolean(tableId)}
+          joinHint={joinHint}
+          selectedGameId={gameId}
+          onSelectGameId={setGameId}
+          labelOf={labelOf}
+          busy={busy}
+          soundEnabled={soundEnabled}
+          onToggleSound={toggleSound}
+          onOpenCharacter={openCharacter}
+          onInvitePerson={(recipientId) => invitePerson(recipientId)}
+          onAnswerInvite={async (inviteId, accept) => {
+            const ok = await socialAction(`/api/caro/invites/${inviteId}`, { accept });
+            if (ok && accept) setGameId(undefined);
+            return ok;
+          }}
+          onMove={(targetGameId, index) => socialAction(`/api/caro/games/${targetGameId}/move`, { index })}
+          onResign={(targetGameId) => socialAction(`/api/caro/games/${targetGameId}/resign`, {})}
+          onDrawAction={(targetGameId, action) => socialAction(`/api/caro/games/${targetGameId}/draw`, { action })}
+          onRematch={rematchCaro}
+          onSendEmoji={sendCaroEmoji}
+          incomingEmoji={incomingCaroEmoji}
+        />}
 
         {tab === 'journal' && <Journal />}
       </main>
@@ -517,7 +613,7 @@ export function Guest() {
           className="guest-nav__tab" onClick={() => selectTab(item.id)}>
           <span className="guest-nav__sprite"><img src={`/art/${item.id}.webp`} alt="" width="45" height="45" />
             {item.id === 'chat' && unreadChats > 0 && <span className="guest-nav__count" aria-label={`${unreadChats} tin nhắn mới`}>{unreadChats}</span>}
-            {item.id === 'caro' && pending > 0 && <span className="guest-nav__count" aria-label={`${pending} lời mời`}>{pending}</span>}
+            {item.id === 'caro' && caroBadgeCount > 0 && <span className="guest-nav__count" aria-label={`${caroBadgeCount} thông báo caro`}>{caroBadgeCount}</span>}
           </span>
           <span>{item.title}</span>
         </button>)}
@@ -528,7 +624,11 @@ export function Guest() {
         joinHint={joinHint} close={() => setInspectId(undefined)} edit={openCharacter}
         chatPerson={(person) => startDirectChat(person, inspecting.id)}
         createGroup={(memberIds) => startGroupWithPeople(memberIds)}
-        invite={() => void invite(inspecting.id)} />}
+        invite={() => {
+          const others = (characters?.[inspecting.id] ?? []).filter((person) => person.id !== profile?.id);
+          if (others.length === 1) void invitePerson(others[0].id, true);
+          else void inviteTable(inspecting.id);
+        }} />}
       {showCharacterDialog && <CharacterDialog profile={profile} onSave={saveCharacter} onClose={closeCharacter} />}
     </div>
   );
@@ -536,10 +636,6 @@ export function Guest() {
 
 function PanelTitle({ icon, title, id }: { icon: Tab; title: string; id: string }) {
   return <h1 className="guest-panel__title" id={id}><img src={`/art/${icon}.webp`} width="44" height="44" alt="" />{title}</h1>;
-}
-
-function GuestEmpty({ text, goMap }: { text: string; goMap: () => void }) {
-  return <div className="guest-empty"><p>{text}</p><button className="btn" onClick={goMap}>Mở sơ đồ</button></div>;
 }
 
 function TableDialog({ table, current, checkedIn, online, people, selfId, joinHint, close, edit, chatPerson, createGroup, invite }: {
@@ -586,24 +682,6 @@ function TableDialog({ table, current, checkedIn, online, people, selfId, joinHi
       {!checkedIn && !current && <p>{joinHint}</p>}
     </div>
   </dialog>;
-}
-
-function CaroBoard({ game, label, busy, move }: { game: Game; label: string; busy: boolean; move: (index: number) => void }) {
-  const myTurn = game.turn === game.mine && !game.winner;
-  const result = game.winner === 'draw' ? 'Ván hòa' : game.winner === game.mine ? 'Bạn thắng!' : 'Đối thủ thắng!';
-  return <div className="caro-board">
-    <div className="caro-board__status" role="status"><span>Bàn {label} · Bạn chơi {game.mine}</span>
-      <strong>{game.winner ? result : myTurn ? 'Đến lượt bạn' : 'Đến lượt đối thủ'}</strong>
-    </div>
-    <div className="caro-board__grid" role="group" aria-label="Bàn cờ caro"
-      style={{ gridTemplateColumns: `repeat(${game.size}, minmax(0, 1fr))` }}>
-      {game.board.map((mark, index) => <button type="button" key={index} className="caro-cell" data-mark={mark}
-        data-last={index === game.lastMove} disabled={Boolean(mark) || !myTurn || busy}
-        aria-label={`Hàng ${Math.floor(index / game.size) + 1}, cột ${index % game.size + 1}${mark ? `, ${mark}` : ''}`}
-        onClick={() => move(index)}>{mark}</button>)}
-    </div>
-    <p className="caro-board__rule">Nối 5 quân liên tiếp để thắng.</p>
-  </div>;
 }
 
 function Journal() {

@@ -6,7 +6,8 @@ import cookie from '@fastify/cookie'
 import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import { Server } from 'socket.io'
-import type { ChatTypingEvent, TableCharacter, VenueActivity, VenueState } from '../src/shared.ts'
+import { caroEmojis } from '../src/shared.ts'
+import type { CaroEmoji, CaroEmojiEvent, ChatTypingEvent, TableCharacter, VenueActivity, VenueState } from '../src/shared.ts'
 import { AppError, object, openDatabase, parseProfile, parseTables } from './database.ts'
 import type { Guest } from './database.ts'
 import { createSocial } from './social.ts'
@@ -140,6 +141,28 @@ io.on('connection', (socket) => {
 
     const typingTimers = new Map<string, ReturnType<typeof setTimeout>>()
     let lastTypingPing = 0
+    let lastCaroEmoji = 0
+
+    socket.on('caro:emoji', (raw: unknown) => {
+      if (typeof raw !== 'object' || raw === null) return
+      const { gameId, emoji } = raw as { gameId?: unknown; emoji?: unknown }
+      if (typeof gameId !== 'string' || !gameId || gameId.length > 64) return
+      if (typeof emoji !== 'string' || !(caroEmojis as readonly string[]).includes(emoji)) return
+      const profile = current.guest.profile
+      if (!current.tableId || !profile) return
+      const now = Date.now()
+      if (now - lastCaroEmoji < 1200) return
+      const opponentGuestId = social.caroOpponentGuestId(guest.id, gameId)
+      if (!opponentGuestId) return
+      lastCaroEmoji = now
+      const payload: CaroEmojiEvent = {
+        gameId,
+        fromId: profile.id,
+        fromName: profile.displayName,
+        emoji: emoji as CaroEmoji,
+      }
+      io.to(guestRoom(opponentGuestId)).emit('caro:emoji', payload)
+    })
 
     const clearTypingFor = (conversationId: string) => {
       const existingTimer = typingTimers.get(conversationId)
@@ -389,9 +412,9 @@ app.post<{ Params: { id: string } }>('/api/chat/groups/:id/leave', async (reques
 })
 app.post('/api/caro/invite', async (request) => {
   const member = checkedIn(request)
-  const { tableId } = object(request.body)
+  const { tableId, recipientId } = object(request.body)
   social.sweep()
-  social.sendInvite(member, tableId)
+  social.sendInvite(member, { tableId, recipientId })
   return social.state(member)
 })
 app.post<{ Params: { id: string } }>('/api/caro/invites/:id', async (request) => {
@@ -407,6 +430,25 @@ app.post<{ Params: { id: string } }>('/api/caro/games/:id/move', async (request)
   social.sweep()
   social.playMove(member, request.params.id, index)
   return social.state(member)
+})
+app.post<{ Params: { id: string } }>('/api/caro/games/:id/resign', async (request) => {
+  const member = checkedIn(request)
+  social.sweep()
+  social.resignGame(member, request.params.id)
+  return social.state(member)
+})
+app.post<{ Params: { id: string } }>('/api/caro/games/:id/draw', async (request) => {
+  const member = checkedIn(request)
+  const { action } = object(request.body)
+  social.sweep()
+  social.handleDraw(member, request.params.id, action)
+  return social.state(member)
+})
+app.post<{ Params: { id: string } }>('/api/caro/games/:id/rematch', async (request) => {
+  const member = checkedIn(request)
+  social.sweep()
+  const nextId = social.requestRematch(member, request.params.id)
+  return { ...social.state(member), gameId: nextId }
 })
 
 app.get('/api/journal', async (request) => ({ entries: database.journal(visitor(request).id) }))

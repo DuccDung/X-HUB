@@ -16,7 +16,6 @@ export type OnlineProfile = {
   tableId: string
 }
 
-type SeatMember = { id: string; tableId: string }
 type Mark = 'X' | 'O'
 type StoredMessage = {
   id: string
@@ -45,14 +44,26 @@ type ChatRecord = {
   seen: Map<string, SeenRecord>
   updatedAt: number
 }
-type InviteRecord = { id: string; sender: SeatMember; tableId: string; recipients: Set<string>; createdAt: number }
+type InviteRecord = {
+  id: string
+  sender: MemberSnapshot
+  tableId: string
+  peer?: MemberSnapshot
+  recipients: Set<string>
+  createdAt: number
+}
 type GameRecord = {
   id: string
-  players: Record<Mark, SeatMember>
+  players: Record<Mark, MemberSnapshot>
   board: (Mark | null)[]
   turn: Mark
   winner: Mark | 'draw' | null
+  winningLine: number[] | null
   lastMove: number | null
+  scores: Record<string, number>
+  drawOfferFrom: Mark | null
+  rematchFrom: Mark | null
+  turnStartedAt: number
   updatedAt: number
 }
 
@@ -119,22 +130,20 @@ export function createSocial(options: {
     }
   }
 
-  function playerMark(game: GameRecord, member: SeatMember): Mark | undefined {
-    return (['X', 'O'] as const).find((mark) =>
-      game.players[mark].id === member.id && game.players[mark].tableId === member.tableId,
-    )
+  function playerMark(game: GameRecord, guestId: string): Mark | undefined {
+    return (['X', 'O'] as const).find((mark) => game.players[mark].guestId === guestId)
   }
 
-  function activeGame(member: SeatMember): boolean {
-    return [...games.values()].some((game) => game.winner === null && playerMark(game, member))
+  function activeGame(guestId: string): boolean {
+    return [...games.values()].some((game) => game.winner === null && playerMark(game, guestId))
   }
 
   function notifyGame(game: GameRecord) {
-    notify([game.players.X.id, game.players.O.id])
+    notify([game.players.X.guestId, game.players.O.guestId])
   }
 
   function notifyInvite(invite: InviteRecord) {
-    notify([invite.sender.id, ...invite.recipients])
+    notify([invite.sender.guestId, ...invite.recipients])
   }
 
   function parseGroupName(value: unknown): string {
@@ -259,26 +268,72 @@ export function createSocial(options: {
     const ownInvites: Invite[] = []
     for (const invite of invites.values()) {
       const createdAt = new Date(invite.createdAt).toISOString()
-      if (invite.sender.id === member.id && invite.sender.tableId === member.tableId) {
-        ownInvites.push({ id: invite.id, tableId: invite.tableId, direction: 'outgoing', createdAt })
-      } else if (invite.tableId === member.tableId && invite.recipients.has(member.id)) {
-        ownInvites.push({ id: invite.id, tableId: invite.sender.tableId, direction: 'incoming', createdAt })
+      const liveSender = liveMap.get(invite.sender.guestId)
+      if (liveSender) {
+        invite.sender.displayName = liveSender.displayName
+        invite.sender.tableId = liveSender.tableId
+        invite.sender.publicId = liveSender.publicId
+      }
+      if (invite.peer) {
+        const livePeer = liveMap.get(invite.peer.guestId)
+        if (livePeer) {
+          invite.peer.displayName = livePeer.displayName
+          invite.peer.tableId = livePeer.tableId
+          invite.peer.publicId = livePeer.publicId
+        }
+      }
+      if (invite.sender.guestId === member.id) {
+        ownInvites.push({
+          id: invite.id,
+          tableId: invite.peer?.tableId ?? invite.tableId,
+          peerId: invite.peer?.publicId,
+          peerName: invite.peer?.displayName,
+          direction: 'outgoing',
+          createdAt,
+        })
+      } else if (invite.recipients.has(member.id)) {
+        ownInvites.push({
+          id: invite.id,
+          tableId: invite.sender.tableId,
+          peerId: invite.sender.publicId,
+          peerName: invite.sender.displayName,
+          direction: 'incoming',
+          createdAt,
+        })
       }
     }
 
     const ownGames: Game[] = []
     for (const game of [...games.values()].sort((a, b) => b.updatedAt - a.updatedAt)) {
-      const mine = playerMark(game, member)
+      const mine = playerMark(game, member.id)
       if (!mine) continue
+      const opponentMark: Mark = mine === 'X' ? 'O' : 'X'
+      const opponent = game.players[opponentMark]
+      const liveOpponent = liveMap.get(opponent.guestId)
+      if (liveOpponent) {
+        opponent.displayName = liveOpponent.displayName
+        opponent.tableId = liveOpponent.tableId
+        opponent.publicId = liveOpponent.publicId
+      }
       ownGames.push({
         id: game.id,
-        tableId: game.players[mine === 'X' ? 'O' : 'X'].tableId,
+        tableId: opponent.tableId,
+        opponentId: opponent.publicId,
+        opponentName: opponent.displayName,
         size: boardSize,
         board: game.board,
         mine,
         turn: game.turn,
         winner: game.winner,
+        winningLine: game.winningLine,
         lastMove: game.lastMove,
+        score: {
+          mine: game.scores[member.id] ?? 0,
+          opponent: game.scores[opponent.guestId] ?? 0,
+        },
+        drawOfferFrom: game.drawOfferFrom,
+        rematchFrom: game.rematchFrom,
+        turnStartedAt: new Date(game.turnStartedAt).toISOString(),
       })
     }
     return { publicChat, conversations: ownConversations, invites: ownInvites, games: ownGames }
@@ -487,33 +542,62 @@ export function createSocial(options: {
     notify(recipients)
   }
 
-  function sendInvite(member: SeatMember, tableId: unknown) {
-    if (typeof tableId !== 'string' || tableId === member.tableId) {
-      throw new AppError(400, 'Hãy chọn một bàn khác để mời chơi.')
-    }
-    if (activeGame(member)) throw new AppError(409, 'Bạn đang có một ván caro đang chơi.')
-    if ([...invites.values()].some((invite) => invite.sender.id === member.id)) {
+  function sendInvite(member: SocialMember, target: { tableId?: unknown; recipientId?: unknown }) {
+    if (activeGame(member.id)) throw new AppError(409, 'Bạn đang có một ván caro đang chơi.')
+    if ([...invites.values()].some((invite) => invite.sender.guestId === member.id)) {
       throw new AppError(409, 'Bạn đang có một lời mời chưa phản hồi.')
     }
-    const available = onlineGuests(tableId).filter((id) => !activeGame({ id, tableId }))
-    if (!available.length) throw new AppError(409, 'Bàn này hiện chưa có khách sẵn sàng chơi caro.')
-    const invite = {
-      id: randomUUID(), sender: member, tableId, recipients: new Set(available), createdAt: Date.now(),
+
+    let tableId: string
+    let recipients: string[]
+    let peer: MemberSnapshot | undefined
+
+    if (typeof target.recipientId === 'string' && target.recipientId) {
+      const online = findOnlineByPublicId(target.recipientId)
+      if (target.recipientId === member.publicId || online?.guestId === member.id) {
+        throw new AppError(400, 'Hãy chọn một khách khác để mời chơi caro.')
+      }
+      if (!online) throw new AppError(409, 'Khách này hiện không còn online.')
+      if (activeGame(online.guestId)) throw new AppError(409, 'Khách này đang bận trong một ván caro khác.')
+      tableId = online.tableId
+      recipients = [online.guestId]
+      peer = snapshotFromOnline(online)
+    } else {
+      if (typeof target.tableId !== 'string' || target.tableId === member.tableId) {
+        throw new AppError(400, 'Hãy chọn một bàn khác để mời chơi.')
+      }
+      const available = onlineGuests(target.tableId).filter((id) => id !== member.id && !activeGame(id))
+      if (!available.length) throw new AppError(409, 'Bàn này hiện chưa có khách sẵn sàng chơi caro.')
+      tableId = target.tableId
+      recipients = available
+      if (available.length === 1) {
+        const single = onlineByGuestId().get(available[0])
+        if (single) peer = snapshotFromOnline(single)
+      }
+    }
+
+    const invite: InviteRecord = {
+      id: randomUUID(),
+      sender: snapshotOf(member),
+      tableId,
+      peer,
+      recipients: new Set(recipients),
+      createdAt: Date.now(),
     }
     invites.set(invite.id, invite)
     notifyInvite(invite)
   }
 
-  function answerInvite(member: SeatMember, id: string, accept: unknown) {
+  function answerInvite(member: SocialMember, id: string, accept: unknown) {
     if (typeof accept !== 'boolean') throw new AppError(400, 'Phản hồi lời mời không hợp lệ.')
     const invite = invites.get(id)
     if (!invite) throw new AppError(404, 'Lời mời đã hết hạn hoặc đã được phản hồi.')
-    if (member.id === invite.sender.id && member.tableId === invite.sender.tableId && !accept) {
+    if (member.id === invite.sender.guestId && !accept) {
       invites.delete(id)
       notifyInvite(invite)
       return
     }
-    if (member.tableId !== invite.tableId || !invite.recipients.has(member.id)) {
+    if (!invite.recipients.has(member.id)) {
       throw new AppError(404, 'Lời mời đã hết hạn hoặc đã được phản hồi.')
     }
     if (!accept) {
@@ -523,38 +607,47 @@ export function createSocial(options: {
       notifyInvite(invite)
       return
     }
-    if (!onlineGuests(invite.sender.tableId).includes(invite.sender.id)) {
+    const liveSender = onlineByGuestId().get(invite.sender.guestId)
+    if (!liveSender) {
       invites.delete(id)
       notifyInvite(invite)
       throw new AppError(409, 'Người gửi lời mời đã rời khỏi bàn.')
     }
-    if (activeGame(member) || activeGame(invite.sender)) {
+    if (activeGame(member.id) || activeGame(invite.sender.guestId)) {
       throw new AppError(409, 'Một người chơi đang có ván caro khác.')
     }
 
+    const now = Date.now()
+    const senderSnap = snapshotFromOnline(liveSender)
+    const memberSnap = snapshotOf(member)
     const game: GameRecord = {
       id: randomUUID(),
-      players: { X: invite.sender, O: member },
+      players: { X: senderSnap, O: memberSnap },
       board: Array<Mark | null>(boardSize * boardSize).fill(null),
       turn: 'X',
       winner: null,
+      winningLine: null,
       lastMove: null,
-      updatedAt: Date.now(),
+      scores: { [senderSnap.guestId]: 0, [memberSnap.guestId]: 0 },
+      drawOfferFrom: null,
+      rematchFrom: null,
+      turnStartedAt: now,
+      updatedAt: now,
     }
     games.set(game.id, game)
     invites.delete(id)
     notifyInvite(invite)
     for (const [pendingId, pending] of invites) {
-      if (pending.sender.id === member.id || pending.sender.id === invite.sender.id) {
+      if (pending.sender.guestId === member.id || pending.sender.guestId === invite.sender.guestId) {
         invites.delete(pendingId)
         notifyInvite(pending)
       }
     }
   }
 
-  function playMove(member: SeatMember, id: string, index: unknown) {
+  function playMove(member: SocialMember, id: string, index: unknown) {
     const game = games.get(id)
-    const mark = game && playerMark(game, member)
+    const mark = game && playerMark(game, member.id)
     if (!game || !mark) throw new AppError(404, 'Không tìm thấy ván caro.')
     if (game.winner) throw new AppError(409, 'Ván caro đã kết thúc.')
     if (mark !== game.turn) throw new AppError(409, 'Chưa đến lượt của bạn.')
@@ -563,37 +656,153 @@ export function createSocial(options: {
     }
     if (game.board[index] !== null) throw new AppError(409, 'Ô này đã có quân cờ.')
 
+    const now = Date.now()
     game.board[index] = mark
     game.lastMove = index
-    game.updatedAt = Date.now()
-    if (hasFive(game.board, index, mark)) game.winner = mark
-    else if (game.board.every((value) => value !== null)) game.winner = 'draw'
-    else game.turn = mark === 'X' ? 'O' : 'X'
+    game.drawOfferFrom = null
+    game.updatedAt = now
+
+    const line = findWinningLine(game.board, index, mark)
+    if (line) {
+      game.winner = mark
+      game.winningLine = line
+      game.scores[member.id] = (game.scores[member.id] ?? 0) + 1
+    } else if (game.board.every((value) => value !== null)) {
+      game.winner = 'draw'
+    } else {
+      game.turn = mark === 'X' ? 'O' : 'X'
+      game.turnStartedAt = now
+    }
     notifyGame(game)
+  }
+
+  function resignGame(member: SocialMember, id: string) {
+    const game = games.get(id)
+    const mark = game && playerMark(game, member.id)
+    if (!game || !mark) throw new AppError(404, 'Không tìm thấy ván caro.')
+    if (game.winner) throw new AppError(409, 'Ván caro đã kết thúc.')
+
+    const opponentMark: Mark = mark === 'X' ? 'O' : 'X'
+    const opponent = game.players[opponentMark]
+    game.winner = opponentMark
+    game.winningLine = null
+    game.drawOfferFrom = null
+    game.scores[opponent.guestId] = (game.scores[opponent.guestId] ?? 0) + 1
+    game.updatedAt = Date.now()
+    notifyGame(game)
+  }
+
+  function handleDraw(member: SocialMember, id: string, action: unknown) {
+    if (action !== 'offer' && action !== 'accept' && action !== 'decline') {
+      throw new AppError(400, 'Thao tác xin hòa không hợp lệ.')
+    }
+    const game = games.get(id)
+    const mark = game && playerMark(game, member.id)
+    if (!game || !mark) throw new AppError(404, 'Không tìm thấy ván caro.')
+    if (game.winner) throw new AppError(409, 'Ván caro đã kết thúc.')
+
+    if (action === 'offer') {
+      if (game.drawOfferFrom === mark) return
+      game.drawOfferFrom = mark
+    } else if (action === 'accept') {
+      if (!game.drawOfferFrom || game.drawOfferFrom === mark) {
+        throw new AppError(409, 'Hiện chưa có đề nghị hòa từ đối thủ.')
+      }
+      game.winner = 'draw'
+      game.winningLine = null
+      game.drawOfferFrom = null
+    } else {
+      if (!game.drawOfferFrom) return
+      game.drawOfferFrom = null
+    }
+    game.updatedAt = Date.now()
+    notifyGame(game)
+  }
+
+  function requestRematch(member: SocialMember, id: string): string {
+    const game = games.get(id)
+    const mark = game && playerMark(game, member.id)
+    if (!game || !mark) throw new AppError(404, 'Không tìm thấy ván caro.')
+    if (!game.winner) throw new AppError(409, 'Ván caro hiện vẫn đang chơi.')
+
+    const opponentMark: Mark = mark === 'X' ? 'O' : 'X'
+    const opponent = game.players[opponentMark]
+    const liveOpponent = onlineByGuestId().get(opponent.guestId)
+    if (!liveOpponent) {
+      throw new AppError(409, 'Đối thủ hiện không còn online.')
+    }
+    if (activeGame(member.id) || activeGame(opponent.guestId)) {
+      throw new AppError(409, 'Một người chơi đang có ván caro khác.')
+    }
+
+    if (!game.rematchFrom) {
+      game.rematchFrom = mark
+      game.updatedAt = Date.now()
+      notifyGame(game)
+      return game.id
+    }
+    if (game.rematchFrom === mark) {
+      return game.id
+    }
+
+    // Both players agreed -> start new round swapping X and O, preserving scores
+    const now = Date.now()
+    const nextX = game.players.O.guestId === member.id ? snapshotOf(member) : snapshotFromOnline(liveOpponent)
+    const nextO = game.players.X.guestId === member.id ? snapshotOf(member) : snapshotFromOnline(liveOpponent)
+    const nextGame: GameRecord = {
+      id: randomUUID(),
+      players: { X: nextX, O: nextO },
+      board: Array<Mark | null>(boardSize * boardSize).fill(null),
+      turn: 'X',
+      winner: null,
+      winningLine: null,
+      lastMove: null,
+      scores: { ...game.scores },
+      drawOfferFrom: null,
+      rematchFrom: null,
+      turnStartedAt: now,
+      updatedAt: now,
+    }
+    games.delete(game.id)
+    games.set(nextGame.id, nextGame)
+    notifyGame(nextGame)
+    return nextGame.id
+  }
+
+  function caroOpponentGuestId(memberId: string, gameId: string): string | null {
+    const game = games.get(gameId)
+    if (!game) return null
+    const mark = playerMark(game, memberId)
+    if (!mark) return null
+    return game.players[mark === 'X' ? 'O' : 'X'].guestId
   }
 
   return {
     state, sweep, sendChat, createGroup, addGroupMembers, leaveGroup,
     markSeen, recipientGuestIds, sendInvite, answerInvite, playMove,
+    resignGame, handleDraw, requestRematch, caroOpponentGuestId,
   }
 }
 
-function hasFive(board: (Mark | null)[], index: number, mark: Mark): boolean {
+function findWinningLine(board: (Mark | null)[], index: number, mark: Mark): number[] | null {
   const x = index % boardSize
   const y = Math.floor(index / boardSize)
   const axes = [[1, 0], [0, 1], [1, 1], [1, -1]]
-  return axes.some(([dx, dy]) => {
-    let count = 1
+  for (const [dx, dy] of axes) {
+    const cells = [index]
     for (const direction of [-1, 1]) {
       let column = x + dx * direction
       let row = y + dy * direction
       while (column >= 0 && column < boardSize && row >= 0 && row < boardSize
         && board[row * boardSize + column] === mark) {
-        count += 1
+        cells.push(row * boardSize + column)
         column += dx * direction
         row += dy * direction
       }
     }
-    return count >= 5
-  })
+    if (cells.length >= 5) {
+      return cells.sort((a, b) => a - b)
+    }
+  }
+  return null
 }

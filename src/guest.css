@@ -171,22 +171,6 @@
 .table-dialog__dm { flex: none; padding: .28rem .58rem; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); color: var(--green); font-size: .8rem; font-weight: 700; }
 .table-dialog__dm:hover { background: #e8efdc; }
 
-.invite-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .55rem; }
-
-.invite-list .guest-card { padding: .7rem; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .55rem; }
-.invite-list p { color: var(--muted); font-size: .87rem; }
-.invite-list .btn { font-size: .84rem; }
-.caro-board { padding: .68rem; border: 1px solid #b58952; border-radius: 14px; background: #e5c38d; }
-.caro-board__status { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .25rem .55rem; margin-bottom: .65rem; font-size: .85rem; }
-.caro-board__grid { display: grid; border: 1px solid #926738; background: #eacb99; }
-.caro-cell { aspect-ratio: 1; border-right: 1px solid #a67743; border-bottom: 1px solid #a67743; display: grid; place-items: center; font: 700 clamp(.72rem, 3.5vw, 1rem)/1 var(--sans); }
-.caro-cell:not(:disabled):hover { background: #f7dcb0; }
-.caro-cell[data-mark='X'] { color: #783017; }
-.caro-cell[data-mark='O'] { color: #0f5140; }
-.caro-cell[data-last='true'] { background: #ffebba; }
-.caro-cell:focus-visible { outline-offset: -2px; }
-.caro-board__rule { margin: .55rem 0 0; color: #4c341f; font-size: .82rem; }
-
 .journal-form { display: grid; gap: .7rem; padding: .8rem; }
 .journal-form textarea { resize: vertical; }
 .journal-form .btn { justify-self: start; }

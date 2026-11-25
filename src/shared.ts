@@ -116,9 +116,21 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export const caroEmojis = ['👏', '😅', '☕'] as const;
+export type CaroEmoji = typeof caroEmojis[number];
+
+export interface CaroEmojiEvent {
+  gameId: string;
+  fromId: string;
+  fromName: string;
+  emoji: CaroEmoji;
+}
+
 export interface Invite {
   id: string;
   tableId: string;
+  peerId?: string;
+  peerName?: string;
   direction: 'incoming' | 'outgoing';
   createdAt: string;
 }
@@ -126,12 +138,19 @@ export interface Invite {
 export interface Game {
   id: string;
   tableId: string;
+  opponentId: string;
+  opponentName: string;
   size: number;
   board: ('X' | 'O' | null)[];
   mine: 'X' | 'O';
   turn: 'X' | 'O';
   winner: 'X' | 'O' | 'draw' | null;
+  winningLine: number[] | null;
   lastMove: number | null;
+  score: { mine: number; opponent: number };
+  drawOfferFrom: 'X' | 'O' | null;
+  rematchFrom: 'X' | 'O' | null;
+  turnStartedAt: string;
 }
 
 export interface SocialState {
