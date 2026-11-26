@@ -124,3 +124,47 @@ export function playCaroInviteSound(): void {
     oscillator.stop(start + 0.24);
   });
 }
+
+export function playPuzzleSlideSound(): void {
+  const ctx = audioContext();
+  if (!ctx || ctx.state !== 'running') return;
+
+  const now = ctx.currentTime;
+  const oscillator = ctx.createOscillator();
+  const gain = ctx.createGain();
+  oscillator.type = 'triangle';
+  oscillator.frequency.setValueAtTime(320, now);
+  oscillator.frequency.exponentialRampToValueAtTime(190, now + 0.048);
+
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.085, now + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
+
+  oscillator.connect(gain);
+  gain.connect(ctx.destination);
+  oscillator.start(now);
+  oscillator.stop(now + 0.065);
+}
+
+export function playPuzzleWinSound(): void {
+  const ctx = audioContext();
+  if (!ctx || ctx.state !== 'running') return;
+
+  const now = ctx.currentTime;
+  [523.25, 659.25, 783.99, 1046.5].forEach((frequency, index) => {
+    const start = now + index * 0.085;
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, start);
+
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.09, start + 0.014);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.26);
+
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.28);
+  });
+}

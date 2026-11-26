@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
 import { io } from 'socket.io-client';
 import type { Socket } from 'socket.io-client';
-import { api, ApiError } from './api';
+import { api } from './api';
 import { CaroPanel } from './CaroPanel';
 import { CharacterDialog } from './CharacterDialog';
 import { CharacterSprite } from './CharacterSprite';
 import { ChatPanel } from './ChatPanel';
 import type { ChatTarget, OnlinePerson } from './ChatPanel';
+import { JournalPanel } from './JournalPanel';
 import { MapView } from './Map';
+import { PuzzlePanel } from './PuzzlePanel';
 import {
   loadSoundEnabled,
   playCaroInviteSound,
@@ -24,7 +25,6 @@ import type {
   ChatTypingEvent,
   FloorId,
   GuestProfile,
-  JournalEntry,
   Layout,
   SocialState,
   TableCharacter,
@@ -38,6 +38,7 @@ const tabs = [
   { id: 'map', title: 'Sơ đồ' },
   { id: 'chat', title: 'Chat' },
   { id: 'caro', title: 'Caro' },
+  { id: 'puzzle', title: 'Xếp hình' },
   { id: 'journal', title: 'Nhật ký' },
 ] as const;
 type Tab = typeof tabs[number]['id'];
@@ -57,7 +58,6 @@ const emptySocial: SocialState = {
   invites: [],
   games: [],
 };
-const dateFormat = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'long' });
 
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : 'Có lỗi xảy ra. Bạn thử lại nhé.';
@@ -522,10 +522,9 @@ export function Guest() {
 
   return (
     <div className="guest-shell">
-      {tab !== 'chat' && tab !== 'caro' && <header className="guest-header">
-        <button className="guest-brand" aria-label="Xưởng Caffe, về sơ đồ" onClick={() => selectTab('map')}>
-          <img src="/art/brand.webp" alt="" width="45" height="45" />
-          <span>Xưởng Caffe</span>
+      {tab === 'map' && <header className="guest-header">
+        <button className="guest-brand" aria-label="XConnect, về sơ đồ" onClick={() => selectTab('map')}>
+          <img src="/art/xconnect.webp" alt="XConnect" />
         </button>
         {current && <button className="guest-seat" type="button" onClick={openCharacter}
           aria-label={profile ? `Chỉnh nhân vật, bàn ${current.label}` : undefined}>
@@ -605,7 +604,14 @@ export function Guest() {
           incomingEmoji={incomingCaroEmoji}
         />}
 
-        {tab === 'journal' && <Journal />}
+        {tab === 'puzzle' && <PuzzlePanel
+          soundEnabled={soundEnabled}
+          onToggleSound={toggleSound}
+        />}
+
+        {tab === 'journal' && <JournalPanel
+          currentSeat={current ? { id: current.id, label: current.label, floor: current.floor } : null}
+        />}
       </main>
 
       <nav className="guest-nav" aria-label="Điều hướng chính">
@@ -632,10 +638,6 @@ export function Guest() {
       {showCharacterDialog && <CharacterDialog profile={profile} onSave={saveCharacter} onClose={closeCharacter} />}
     </div>
   );
-}
-
-function PanelTitle({ icon, title, id }: { icon: Tab; title: string; id: string }) {
-  return <h1 className="guest-panel__title" id={id}><img src={`/art/${icon}.webp`} width="44" height="44" alt="" />{title}</h1>;
 }
 
 function TableDialog({ table, current, checkedIn, online, people, selfId, joinHint, close, edit, chatPerson, createGroup, invite }: {
@@ -682,70 +684,4 @@ function TableDialog({ table, current, checkedIn, online, people, selfId, joinHi
       {!checkedIn && !current && <p>{joinHint}</p>}
     </div>
   </dialog>;
-}
-
-function Journal() {
-  const [entries, setEntries] = useState<JournalEntry[]>();
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [notice, setNotice] = useState('');
-  const [error, setError] = useState('');
-  const [needsQr, setNeedsQr] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    api<{ entries: JournalEntry[] }>('/api/journal', { signal: controller.signal })
-      .then((data) => setEntries(data.entries))
-      .catch((failure: unknown) => {
-        if (controller.signal.aborted) return;
-        if (failure instanceof ApiError && failure.status === 401) setNeedsQr(true);
-        else setError(messageOf(failure));
-      });
-    return () => controller.abort();
-  }, [attempt]);
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saving || !title.trim() || !body.trim()) return;
-    setSaving(true);
-    setError('');
-    setNotice('');
-    try {
-      const { entry } = await api<{ entry: JournalEntry }>('/api/journal', {
-        method: 'POST', body: JSON.stringify({ title: title.trim(), body: body.trim() }),
-      });
-      setEntries((previous) => [entry, ...(previous ?? [])]);
-      setTitle('');
-      setBody('');
-      setNotice('Đã lưu kỷ niệm của bạn.');
-    } catch (failure) {
-      setError(messageOf(failure));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return <section className="guest-panel" aria-labelledby="journal-title">
-    <PanelTitle icon="journal" title="Nhật ký" id="journal-title" />
-    {error && <p className="form-error" role="alert">{error}</p>}
-    {needsQr ? <p className="guest-empty">Quét QR tại bàn để mở nhật ký của bạn.</p> : !entries ? (
-      error ? <button className="btn" onClick={() => { setError(''); setAttempt(attempt + 1); }}>Tải lại nhật ký</button> : <p role="status">Đang mở nhật ký…</p>
-    ) : <>
-      <form className="journal-form guest-card" onSubmit={save}>
-        <label className="field-label">Tiêu đề<input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={80} required /></label>
-        <label className="field-label">Kỷ niệm<textarea value={body} onChange={(event) => setBody(event.target.value)} maxLength={4000} rows={5} required /></label>
-        <button className="btn btn--green" disabled={saving || !title.trim() || !body.trim()}>{saving ? 'Đang lưu…' : 'Lưu nhật ký'}</button>
-        {notice && <p className="form-success" role="status">{notice}</p>}
-      </form>
-      <p className="journal-note">Nhật ký riêng tư và có thể mở lại trên trình duyệt này.</p>
-      {entries.length > 0 && <div className="journal-entries"><h2>Kỷ niệm đã lưu</h2>
-        {entries.map((entry) => <details key={entry.id} className="guest-card journal-entry">
-          <summary><strong>{entry.title}</strong><time dateTime={entry.createdAt}>{dateFormat.format(new Date(entry.createdAt))}</time></summary>
-          <p>{entry.body}</p>
-        </details>)}
-      </div>}
-    </>}
-  </section>;
 }

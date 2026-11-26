@@ -16,8 +16,8 @@
   position: relative;
   z-index: 4;
   flex: 0 0 auto;
-  padding: max(7px, env(safe-area-inset-top)) 14px 7px;
-  min-height: 58px;
+  padding: max(5px, env(safe-area-inset-top)) 14px 5px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -25,9 +25,8 @@
   background: var(--cream);
   border-bottom: 1px solid #e9d5b5;
 }
-.guest-brand { display: flex; align-items: center; gap: 8px; min-height: 44px; }
-.guest-brand img { width: 42px; height: 42px; object-fit: contain; }
-.guest-brand span { font: 700 clamp(1.2rem, 5.5vw, 1.65rem)/1.1 var(--serif); white-space: nowrap; }
+.guest-brand { display: flex; align-items: center; min-height: 40px; min-width: 0; }
+.guest-brand img { height: 30px; width: auto; max-width: min(56vw, 160px); object-fit: contain; display: block; }
 .guest-seat {
   position: relative;
   display: flex;
@@ -103,12 +102,12 @@
 .guest-nav {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 2px;
   min-height: 78px;
   flex: 0 0 auto;
   z-index: 4;
-  padding: 4px 6px max(6px, env(safe-area-inset-bottom));
+  padding: 4px 4px max(6px, env(safe-area-inset-bottom));
   border-top: 1px solid #decaad;
   background: var(--cream);
 }
@@ -121,14 +120,15 @@
   padding: 2px 0;
   border-radius: 13px;
   color: #5b4333;
-  font-size: .82rem;
+  font-size: .74rem;
   font-weight: 590;
   line-height: 1.25;
+  white-space: nowrap;
 }
 .guest-nav__tab:hover { background: #eee4d0; }
 .guest-nav__tab[aria-current] { color: #0e493a; font-weight: 740; }
-.guest-nav__sprite { position: relative; display: grid; place-items: center; width: min(75px, 95%); height: 46px; border-radius: 17px; }
-.guest-nav__sprite img { width: 45px; height: 45px; object-fit: contain; }
+.guest-nav__sprite { position: relative; display: grid; place-items: center; width: min(62px, 94%); height: 44px; border-radius: 15px; }
+.guest-nav__sprite img { width: 40px; height: 40px; object-fit: contain; }
 .guest-nav__tab[aria-current] .guest-nav__sprite { background: #dbe3c9; }
 .guest-nav__count {
   position: absolute;
@@ -170,17 +170,6 @@
 .table-dialog__characters small { color: var(--green); }
 .table-dialog__dm { flex: none; padding: .28rem .58rem; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); color: var(--green); font-size: .8rem; font-weight: 700; }
 .table-dialog__dm:hover { background: #e8efdc; }
-
-.journal-form { display: grid; gap: .7rem; padding: .8rem; }
-.journal-form textarea { resize: vertical; }
-.journal-form .btn { justify-self: start; }
-.journal-note { margin: 0; color: var(--muted); font-size: .85rem; }
-.journal-entries { display: grid; gap: .5rem; }
-.journal-entries h2 { margin: 0 0 .16rem; font: 700 1.22rem var(--serif); }
-.journal-entry { padding: .7rem; }
-.journal-entry summary { cursor: pointer; overflow-wrap: anywhere; }
-.journal-entry time { display: block; margin: .14rem 0 0; color: var(--muted); font-size: .82rem; }
-.journal-entry p { margin: .58rem 0 .1rem; overflow-wrap: anywhere; white-space: pre-wrap; }
 
 @media (max-width: 340px) {
   .guest-header { padding-inline: 8px; gap: .35rem; }

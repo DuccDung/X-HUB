@@ -467,7 +467,9 @@ export function ChatPanel({
   return (
     <section className="chat-panel" aria-labelledby="chat-title">
       <div className="chat-list-head">
-        <h1 id="chat-title">Chat</h1>
+        <h1 id="chat-title" className="chat-list-head__brand">
+          <img src="/art/xconnect.webp" alt="XConnect" />
+        </h1>
         <div className="chat-list-head__actions">
           <button type="button" className={`chat-icon-btn${soundEnabled ? '' : ' chat-icon-btn--muted'}`}
             title={soundEnabled ? 'Tắt âm thông báo' : 'Bật âm thông báo'}

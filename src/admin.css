@@ -81,8 +81,9 @@
 .xc-admin__brand img {
   display: block;
   flex: none;
-  width: 42px;
-  height: 42px;
+  height: 32px;
+  width: auto;
+  max-width: 170px;
   object-fit: contain;
 }
 

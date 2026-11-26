@@ -128,10 +128,17 @@
   padding: max(8px, env(safe-area-inset-top)) 14px 6px;
   min-height: 48px;
 }
-.caro-lobby__title {
+.caro-lobby__brand {
   margin: 0;
-  font: 700 1.6rem/1.1 var(--serif);
-  color: var(--ink);
+  display: flex;
+  align-items: center;
+}
+.caro-lobby__brand img {
+  height: 30px;
+  width: auto;
+  max-width: 160px;
+  object-fit: contain;
+  display: block;
 }
 .caro-lobby__body {
   flex: 1 1 auto;

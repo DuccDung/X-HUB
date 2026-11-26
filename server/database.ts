@@ -2,8 +2,32 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { characterBottoms, characterModels, characterShoes, characterTops, floorIds } from '../src/shared.ts'
-import type { AdminLayout, CharacterOutfit, FloorId, GuestProfile, JournalEntry, Layout, TableCharacter, TableLayout } from '../src/shared.ts'
+import {
+  characterBottoms,
+  characterModels,
+  characterShoes,
+  characterTops,
+  floorIds,
+  journalMaxNoteLength,
+  journalMaxPhotosPerEntry,
+  journalMaxPhotosPerGuest,
+} from '../src/shared.ts'
+import type {
+  AdminLayout,
+  CharacterOutfit,
+  FloorId,
+  GuestProfile,
+  JournalEntry,
+  JournalPhoto,
+  JournalPhotoMime,
+  JournalState,
+  JournalSummary,
+  Layout,
+  TableCharacter,
+  TableLayout,
+} from '../src/shared.ts'
+import { createJournalPhotoStore } from './journalPhotos.ts'
+import type { DecodedPhoto } from './journalPhotos.ts'
 
 export class AppError extends Error {
   statusCode: number
@@ -179,8 +203,37 @@ function normalizeFloor(value: unknown): FloorId {
   return (floorIds as readonly unknown[]).includes(value) ? (value as FloorId) : 1
 }
 
+const visitDayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+type StoredJournalEntry = {
+  id: string
+  title: string
+  body: string
+  createdAt: string
+  updatedAt: string | null
+  tableId: string | null
+  tableLabel: string | null
+  floor: number | null
+  favorite: number
+}
+
+type StoredJournalPhoto = {
+  id: string
+  entryId: string
+  guestId: string
+  fileName: string
+  mime: JournalPhotoMime
+  width: number
+  height: number
+  sizeBytes: number
+  position: number
+  favorite: number
+  createdAt: string
+}
+
 export function openDatabase(filename: string) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true, mode: 0o700 })
+  const photoStore = createJournalPhotoStore(filename)
   const db = new DatabaseSync(filename, { enableForeignKeyConstraints: true, timeout: 5000 })
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -215,7 +268,31 @@ export function openDatabase(filename: string) {
       created_at TEXT NOT NULL
     ) STRICT;
     CREATE INDEX IF NOT EXISTS journal_by_guest ON journal_entries (guest_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS journal_photos (
+      id TEXT PRIMARY KEY,
+      entry_id TEXT NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+      guest_id TEXT NOT NULL REFERENCES guests(id) ON DELETE CASCADE,
+      file_name TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      width INTEGER NOT NULL,
+      height INTEGER NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      favorite INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS journal_photos_by_entry ON journal_photos (entry_id, position ASC);
+    CREATE INDEX IF NOT EXISTS journal_photos_by_guest ON journal_photos (guest_id, created_at DESC);
   `)
+
+  const journalColumns = new Set(
+    (db.prepare('PRAGMA table_info(journal_entries)').all() as { name: string }[]).map((column) => column.name),
+  )
+  if (!journalColumns.has('table_id')) db.exec('ALTER TABLE journal_entries ADD COLUMN table_id TEXT')
+  if (!journalColumns.has('table_label')) db.exec('ALTER TABLE journal_entries ADD COLUMN table_label TEXT')
+  if (!journalColumns.has('floor')) db.exec('ALTER TABLE journal_entries ADD COLUMN floor INTEGER')
+  if (!journalColumns.has('favorite')) db.exec('ALTER TABLE journal_entries ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0')
+  if (!journalColumns.has('updated_at')) db.exec('ALTER TABLE journal_entries ADD COLUMN updated_at TEXT')
 
   const readLayout = db.prepare('SELECT version, tables FROM layouts WHERE slot = ?')
   const writeLayout = db.prepare(`
@@ -242,10 +319,57 @@ export function openDatabase(filename: string) {
     RETURNING public_id
   `)
   const listJournal = db.prepare(`
-    SELECT id, title, body, created_at AS createdAt FROM journal_entries
+    SELECT id, title, body, created_at AS createdAt, updated_at AS updatedAt,
+      table_id AS tableId, table_label AS tableLabel, floor, favorite
+    FROM journal_entries
     WHERE guest_id = ? ORDER BY created_at DESC, rowid DESC
   `)
-  const addJournal = db.prepare('INSERT INTO journal_entries (id, guest_id, title, body, created_at) VALUES (?, ?, ?, ?, ?)')
+  const findJournalEntry = db.prepare(`
+    SELECT id, title, body, created_at AS createdAt, updated_at AS updatedAt,
+      table_id AS tableId, table_label AS tableLabel, floor, favorite
+    FROM journal_entries
+    WHERE id = ? AND guest_id = ?
+  `)
+  const addJournal = db.prepare(`
+    INSERT INTO journal_entries (id, guest_id, title, body, created_at, updated_at, table_id, table_label, floor, favorite)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const updateJournalEntryNote = db.prepare(`
+    UPDATE journal_entries SET body = ?, updated_at = ? WHERE id = ? AND guest_id = ?
+  `)
+  const updateJournalEntryFavorite = db.prepare(`
+    UPDATE journal_entries SET favorite = ? WHERE id = ? AND guest_id = ?
+  `)
+  const deleteJournalEntryRow = db.prepare('DELETE FROM journal_entries WHERE id = ? AND guest_id = ?')
+
+  const listJournalPhotosByGuest = db.prepare(`
+    SELECT id, entry_id AS entryId, guest_id AS guestId, file_name AS fileName,
+      mime, width, height, size_bytes AS sizeBytes, position, favorite, created_at AS createdAt
+    FROM journal_photos
+    WHERE guest_id = ? ORDER BY created_at DESC, position ASC
+  `)
+  const listJournalPhotosByEntry = db.prepare(`
+    SELECT id, entry_id AS entryId, guest_id AS guestId, file_name AS fileName,
+      mime, width, height, size_bytes AS sizeBytes, position, favorite, created_at AS createdAt
+    FROM journal_photos
+    WHERE entry_id = ? AND guest_id = ? ORDER BY position ASC
+  `)
+  const countJournalPhotosByGuest = db.prepare('SELECT COUNT(*) AS total FROM journal_photos WHERE guest_id = ?')
+  const findJournalPhotoRow = db.prepare(`
+    SELECT id, entry_id AS entryId, guest_id AS guestId, file_name AS fileName,
+      mime, width, height, size_bytes AS sizeBytes, position, favorite, created_at AS createdAt
+    FROM journal_photos
+    WHERE id = ? AND guest_id = ?
+  `)
+  const addJournalPhoto = db.prepare(`
+    INSERT INTO journal_photos (id, entry_id, guest_id, file_name, mime, width, height, size_bytes, position, favorite, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const toggleJournalPhotoFav = db.prepare(`
+    UPDATE journal_photos SET favorite = CASE WHEN favorite = 1 THEN 0 ELSE 1 END
+    WHERE id = ? AND guest_id = ?
+  `)
+  const deleteJournalPhotoRow = db.prepare('DELETE FROM journal_photos WHERE id = ? AND guest_id = ?')
 
   function transaction<T>(action: () => T): T {
     db.exec('BEGIN IMMEDIATE')
@@ -327,8 +451,65 @@ export function openDatabase(filename: string) {
     }
   }
 
+  function formatPhoto(row: StoredJournalPhoto): JournalPhoto {
+    return {
+      id: row.id,
+      url: `/api/journal/photos/${row.id}`,
+      downloadUrl: `/api/journal/photos/${row.id}?download=1`,
+      mime: row.mime,
+      width: row.width,
+      height: row.height,
+      favorite: row.favorite === 1,
+      createdAt: row.createdAt,
+    }
+  }
+
+  function formatEntry(row: StoredJournalEntry, photos: JournalPhoto[]): JournalEntry {
+    const floor = row.floor === 1 || row.floor === 2 ? (row.floor as FloorId) : null
+    return {
+      id: row.id,
+      title: row.title,
+      body: row.body,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      tableId: row.tableId,
+      tableLabel: row.tableLabel,
+      floor,
+      favorite: row.favorite === 1 || photos.some((photo) => photo.favorite),
+      photos,
+    }
+  }
+
+  function buildJournalState(guestId: string): JournalState {
+    const entryRows = listJournal.all(guestId) as StoredJournalEntry[]
+    const photoRows = listJournalPhotosByGuest.all(guestId) as StoredJournalPhoto[]
+    const photosByEntry = new Map<string, JournalPhoto[]>()
+    for (const photoRow of photoRows) {
+      const group = photosByEntry.get(photoRow.entryId) ?? []
+      group.push(formatPhoto(photoRow))
+      photosByEntry.set(photoRow.entryId, group)
+    }
+    const visitDays = new Set<string>()
+    let totalPhotos = 0
+    const entries = entryRows.map((row) => {
+      const photos = photosByEntry.get(row.id) ?? []
+      totalPhotos += photos.length
+      visitDays.add(visitDayFormat.format(new Date(row.createdAt)))
+      return formatEntry(row, photos)
+    })
+    const summary: JournalSummary = {
+      totalPhotos,
+      totalEntries: entries.length,
+      visitCount: visitDays.size,
+    }
+    return { entries, summary }
+  }
+
   return {
-    close: () => db.close(),
+    close: () => {
+      db.close()
+      photoStore.cleanup()
+    },
     published: () => published,
     adminLayout,
     saveDraft(tables: TableLayout[], version: unknown): AdminLayout {
@@ -381,18 +562,166 @@ export function openDatabase(filename: string) {
       if (typeof result?.public_id !== 'string') throw new Error('Không tìm thấy nhân vật vừa lưu.')
       return { ...profile, id: result.public_id }
     },
-    journal(guestId: string): JournalEntry[] {
-      return listJournal.all(guestId).map((entry) => ({
-        id: String(entry.id),
-        title: String(entry.title),
-        body: String(entry.body),
-        createdAt: String(entry.createdAt),
-      }))
+    journal(guestId: string): JournalState {
+      return buildJournalState(guestId)
     },
-    writeJournal(guestId: string, title: string, body: string): JournalEntry {
-      const entry = { id: randomUUID(), title, body, createdAt: new Date().toISOString() }
-      addJournal.run(entry.id, guestId, title, body, entry.createdAt)
-      return entry
+    writeJournal(
+      guestId: string,
+      title: string,
+      body: string,
+      seat?: { tableId: string; tableLabel: string; floor: FloorId } | null,
+    ): { entry: JournalEntry; summary: JournalSummary } {
+      const createdAt = new Date().toISOString()
+      const id = randomUUID()
+      addJournal.run(
+        id,
+        guestId,
+        title,
+        body,
+        createdAt,
+        null,
+        seat?.tableId ?? null,
+        seat?.tableLabel ?? null,
+        seat?.floor ?? null,
+        0,
+      )
+      const state = buildJournalState(guestId)
+      const entry = state.entries.find((item) => item.id === id)
+      if (!entry) throw new Error('Không tìm thấy nhật ký vừa lưu.')
+      return { entry, summary: state.summary }
+    },
+    createJournalPhotoEntry(
+      guestId: string,
+      note: string,
+      photos: DecodedPhoto[],
+      seat?: { tableId: string; tableLabel: string; floor: FloorId } | null,
+    ): { entry: JournalEntry; summary: JournalSummary } {
+      if (photos.length < 1 || photos.length > journalMaxPhotosPerEntry) {
+        throw new AppError(400, `Hãy chọn từ 1 đến ${journalMaxPhotosPerEntry} ảnh mỗi lần lưu.`)
+      }
+      if ([...note].length > journalMaxNoteLength) {
+        throw new AppError(400, `Ghi chú ngắn tối đa ${journalMaxNoteLength} ký tự.`)
+      }
+      const existing = Number((countJournalPhotosByGuest.get(guestId) as { total: number } | undefined)?.total ?? 0)
+      if (existing + photos.length > journalMaxPhotosPerGuest) {
+        throw new AppError(409, `Album cá nhân lưu tối đa ${journalMaxPhotosPerGuest} ảnh. Hãy xóa bớt ảnh cũ trước khi lưu thêm.`)
+      }
+
+      const createdAt = new Date().toISOString()
+      const entryId = randomUUID()
+      const prepared = photos.map((photo, position) => ({
+        id: randomUUID(),
+        position,
+        photo,
+      }))
+      const writtenFiles: string[] = []
+      try {
+        const storedFiles = prepared.map((item) => {
+          const fileName = photoStore.write(guestId, item.id, item.photo.ext, item.photo.buffer)
+          writtenFiles.push(fileName)
+          return { ...item, fileName }
+        })
+        transaction(() => {
+          const recheck = Number((countJournalPhotosByGuest.get(guestId) as { total: number } | undefined)?.total ?? 0)
+          if (recheck + storedFiles.length > journalMaxPhotosPerGuest) {
+            throw new AppError(409, `Album cá nhân lưu tối đa ${journalMaxPhotosPerGuest} ảnh.`)
+          }
+          addJournal.run(
+            entryId,
+            guestId,
+            '',
+            note,
+            createdAt,
+            null,
+            seat?.tableId ?? null,
+            seat?.tableLabel ?? null,
+            seat?.floor ?? null,
+            0,
+          )
+          for (const item of storedFiles) {
+            addJournalPhoto.run(
+              item.id,
+              entryId,
+              guestId,
+              item.fileName,
+              item.photo.mime,
+              item.photo.width,
+              item.photo.height,
+              item.photo.buffer.length,
+              item.position,
+              0,
+              createdAt,
+            )
+          }
+        })
+      } catch (error) {
+        photoStore.remove(writtenFiles)
+        throw error
+      }
+
+      const state = buildJournalState(guestId)
+      const entry = state.entries.find((item) => item.id === entryId)
+      if (!entry) throw new Error('Không tìm thấy nhật ký vừa lưu.')
+      return { entry, summary: state.summary }
+    },
+    readJournalPhoto(guestId: string, photoId: string): { id: string; mime: JournalPhotoMime; createdAt: string; buffer: Buffer } | null {
+      const row = findJournalPhotoRow.get(photoId, guestId) as StoredJournalPhoto | undefined
+      if (!row) return null
+      const buffer = photoStore.read(row.fileName)
+      if (!buffer) return null
+      return { id: row.id, mime: row.mime, createdAt: row.createdAt, buffer }
+    },
+    updateJournalNote(guestId: string, entryId: string, note: string): JournalState {
+      const existing = findJournalEntry.get(entryId, guestId) as StoredJournalEntry | undefined
+      if (!existing) throw new AppError(404, 'Không tìm thấy kỷ niệm này.')
+      const limit = existing.title ? 4000 : journalMaxNoteLength
+      if ([...note].length > limit) {
+        throw new AppError(400, `Ghi chú tối đa ${limit} ký tự.`)
+      }
+      updateJournalEntryNote.run(note, new Date().toISOString(), entryId, guestId)
+      return buildJournalState(guestId)
+    },
+    toggleJournalPhotoFavorite(guestId: string, photoId: string): JournalState {
+      const photo = findJournalPhotoRow.get(photoId, guestId) as StoredJournalPhoto | undefined
+      if (!photo) throw new AppError(404, 'Không tìm thấy ảnh này.')
+      transaction(() => {
+        toggleJournalPhotoFav.run(photoId, guestId)
+        const siblings = listJournalPhotosByEntry.all(photo.entryId, guestId) as StoredJournalPhoto[]
+        const anyFav = siblings.some((item) => item.favorite === 1) ? 1 : 0
+        updateJournalEntryFavorite.run(anyFav, photo.entryId, guestId)
+      })
+      return buildJournalState(guestId)
+    },
+    deleteJournalPhoto(guestId: string, photoId: string): JournalState {
+      const photo = findJournalPhotoRow.get(photoId, guestId) as StoredJournalPhoto | undefined
+      if (!photo) throw new AppError(404, 'Không tìm thấy ảnh này.')
+      transaction(() => {
+        deleteJournalPhotoRow.run(photoId, guestId)
+        const remaining = listJournalPhotosByEntry.all(photo.entryId, guestId) as StoredJournalPhoto[]
+        if (remaining.length === 0) {
+          const entry = findJournalEntry.get(photo.entryId, guestId) as StoredJournalEntry | undefined
+          if (entry && !entry.title.trim()) {
+            deleteJournalEntryRow.run(photo.entryId, guestId)
+          } else {
+            updateJournalEntryFavorite.run(0, photo.entryId, guestId)
+          }
+        } else {
+          const anyFav = remaining.some((item) => item.favorite === 1) ? 1 : 0
+          updateJournalEntryFavorite.run(anyFav, photo.entryId, guestId)
+        }
+      })
+      photoStore.remove([photo.fileName])
+      return buildJournalState(guestId)
+    },
+    deleteJournalEntry(guestId: string, entryId: string): JournalState {
+      const entry = findJournalEntry.get(entryId, guestId) as StoredJournalEntry | undefined
+      if (!entry) throw new AppError(404, 'Không tìm thấy kỷ niệm này.')
+      const photos = listJournalPhotosByEntry.all(entryId, guestId) as StoredJournalPhoto[]
+      transaction(() => {
+        deleteJournalEntryRow.run(entryId, guestId)
+      })
+      photoStore.remove(photos.map((item) => item.fileName))
+      return buildJournalState(guestId)
     },
   }
 }

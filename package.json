@@ -11,6 +11,7 @@
     "dev:api": "node --env-file-if-exists=.env --watch server/index.ts",
     "dev:web": "vite",
     "check": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
     "build": "npm run check && vite build",
     "start": "node --env-file-if-exists=.env server/index.ts"
   },

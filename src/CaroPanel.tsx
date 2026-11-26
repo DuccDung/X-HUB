@@ -780,7 +780,9 @@ export function CaroPanel({
   return (
     <section className="caro-lobby" aria-labelledby="caro-title">
       <header className="caro-lobby__head">
-        <h1 className="caro-lobby__title" id="caro-title">Caro</h1>
+        <h1 className="caro-lobby__brand" id="caro-title">
+          <img src="/art/xconnect.webp" alt="XConnect" />
+        </h1>
         <button
           type="button"
           className={`caro-icon-btn${soundEnabled ? '' : ' caro-icon-btn--muted'}`}
@@ -972,9 +974,6 @@ export function CaroPanel({
 
         {/* Solo Mode: Play vs Bot */}
         <div className="caro-section">
-          <div className="caro-section__head">
-            <span>Chơi một mình</span>
-          </div>
           <article className="caro-card caro-bot-card">
             <div className="caro-bot-card__top">
               <span className="caro-bot-badge" aria-hidden="true">

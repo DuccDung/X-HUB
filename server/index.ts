@@ -6,10 +6,12 @@ import cookie from '@fastify/cookie'
 import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify'
 import { Server } from 'socket.io'
-import { caroEmojis } from '../src/shared.ts'
+import { caroEmojis, journalMaxNoteLength, journalMaxPhotosPerEntry } from '../src/shared.ts'
 import type { CaroEmoji, CaroEmojiEvent, ChatTypingEvent, TableCharacter, VenueActivity, VenueState } from '../src/shared.ts'
 import { AppError, object, openDatabase, parseProfile, parseTables } from './database.ts'
 import type { Guest } from './database.ts'
+import { parsePhotoInput } from './journalPhotos.ts'
+import type { DecodedPhoto } from './journalPhotos.ts'
 import { createSocial } from './social.ts'
 import type { OnlineProfile, SocialMember } from './social.ts'
 
@@ -51,6 +53,7 @@ const live = new Map<string, LiveGuest>()
 const admins = new Map<string, number>()
 const failures = new Map<string, LoginAttempt>()
 const entryAttempts = new Map<string, LoginAttempt>()
+const journalUploadAttempts = new Map<string, LoginAttempt>()
 let venueActivity: VenueActivity = { presence: {}, characters: {} }
 
 function onlineGuests(tableId: string): string[] {
@@ -228,6 +231,7 @@ const timer = setInterval(() => {
   for (const [token, expiresAt] of admins) if (expiresAt <= now) admins.delete(token)
   for (const [ip, attempt] of failures) if (attempt.until <= now) failures.delete(ip)
   for (const [ip, attempt] of entryAttempts) if (attempt.until <= now) entryAttempts.delete(ip)
+  for (const [key, attempt] of journalUploadAttempts) if (attempt.until <= now) journalUploadAttempts.delete(key)
 }, 10_000)
 timer.unref()
 
@@ -451,17 +455,105 @@ app.post<{ Params: { id: string } }>('/api/caro/games/:id/rematch', async (reque
   return { ...social.state(member), gameId: nextId }
 })
 
-app.get('/api/journal', async (request) => ({ entries: database.journal(visitor(request).id) }))
-app.post('/api/journal', async (request, reply) => {
+const journalPhotoIdPattern = /^[a-f0-9-]{36}$/i
+const journalDownloadDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' })
+
+function activeSeatSnapshot(guest: Guest) {
+  const tableId = database.activeTable(guest)
+  if (!tableId) return null
+  const table = database.published().tables.find((item) => item.id === tableId)
+  if (!table) return null
+  return { tableId: table.id, tableLabel: table.label, floor: table.floor }
+}
+
+function cleanJournalText(raw: unknown): string {
+  if (typeof raw !== 'string') return ''
+  if (/[\p{Cc}\p{Cs}\p{Bidi_Control}]/u.test(raw.replace(/[\n\r\t]/g, ''))) {
+    throw new AppError(400, 'Nội dung chứa ký tự không hợp lệ.')
+  }
+  return raw.trim().normalize('NFC')
+}
+
+app.get('/api/journal', async (request) => database.journal(visitor(request).id))
+
+app.post('/api/journal', { bodyLimit: 6 * 1024 * 1024 }, async (request, reply) => {
   const guest = visitor(request)
-  const { title, body } = object(request.body)
-  const heading = typeof title === 'string' ? title.trim() : ''
-  const content = typeof body === 'string' ? body.trim() : ''
+  recordAttempt(journalUploadAttempts, guest.id, 60, 'Bạn đang lưu ảnh quá nhanh. Vui lòng thử lại sau ít phút.')
+  const payload = object(request.body)
+  const attachTable = payload.attachTable !== false
+  const seat = attachTable ? activeSeatSnapshot(guest) : null
+
+  if (Array.isArray(payload.photos)) {
+    if (payload.photos.length < 1 || payload.photos.length > journalMaxPhotosPerEntry) {
+      throw new AppError(400, `Hãy chọn từ 1 đến ${journalMaxPhotosPerEntry} ảnh mỗi lần lưu.`)
+    }
+    const note = cleanJournalText(payload.note ?? payload.body)
+    if ([...note].length > journalMaxNoteLength) {
+      throw new AppError(400, `Ghi chú ngắn tối đa ${journalMaxNoteLength} ký tự.`)
+    }
+    const decoded: DecodedPhoto[] = []
+    for (const rawPhoto of payload.photos) {
+      const parsed = parsePhotoInput(rawPhoto)
+      if (!parsed.ok) throw new AppError(parsed.statusCode, parsed.message)
+      decoded.push(parsed.photo)
+    }
+    const result = database.createJournalPhotoEntry(guest.id, note, decoded, seat)
+    return reply.code(201).send(result)
+  }
+
+  const heading = cleanJournalText(payload.title)
+  const content = cleanJournalText(payload.body)
   if (!content || content.length > 4000 || heading.length > 80) {
     throw new AppError(400, 'Nhật ký cần nội dung từ 1 đến 4.000 ký tự và tiêu đề tối đa 80 ký tự.')
   }
-  const entry = database.writeJournal(guest.id, heading || 'Kỷ niệm tại Xưởng', content)
-  return reply.code(201).send({ entry })
+  const result = database.writeJournal(guest.id, heading || 'Kỷ niệm tại Xưởng', content, seat)
+  return reply.code(201).send(result)
+})
+
+app.get<{ Params: { id: string }; Querystring: { download?: string } }>('/api/journal/photos/:id', async (request, reply) => {
+  const guest = visitor(request)
+  const photoId = request.params.id
+  if (!journalPhotoIdPattern.test(photoId)) throw new AppError(404, 'Không tìm thấy ảnh này.')
+  const photo = database.readJournalPhoto(guest.id, photoId)
+  if (!photo) throw new AppError(404, 'Không tìm thấy ảnh này.')
+  const ext = photo.mime === 'image/webp' ? 'webp' : photo.mime === 'image/png' ? 'png' : 'jpg'
+  const download = request.query.download === '1' || request.query.download === 'true'
+  reply.header('Cache-Control', 'private, max-age=31536000, immutable')
+  reply.header('X-Content-Type-Options', 'nosniff')
+  reply.header('Content-Type', photo.mime)
+  if (download) {
+    const stamp = journalDownloadDate.format(new Date(photo.createdAt)).replace(/-/g, '')
+    reply.header('Content-Disposition', `attachment; filename="xuong-caffe-${stamp}-${photo.id.slice(0, 8)}.${ext}"`)
+  } else {
+    reply.header('Content-Disposition', 'inline')
+  }
+  return reply.send(photo.buffer)
+})
+
+app.patch<{ Params: { id: string } }>('/api/journal/:id', async (request) => {
+  const guest = visitor(request)
+  if (!journalPhotoIdPattern.test(request.params.id)) throw new AppError(404, 'Không tìm thấy kỷ niệm này.')
+  const { note, body } = object(request.body)
+  const clean = cleanJournalText(note ?? body)
+  return database.updateJournalNote(guest.id, request.params.id, clean)
+})
+
+app.patch<{ Params: { id: string } }>('/api/journal/photos/:id/favorite', async (request) => {
+  const guest = visitor(request)
+  if (!journalPhotoIdPattern.test(request.params.id)) throw new AppError(404, 'Không tìm thấy ảnh này.')
+  return database.toggleJournalPhotoFavorite(guest.id, request.params.id)
+})
+
+app.delete<{ Params: { id: string } }>('/api/journal/photos/:id', async (request) => {
+  const guest = visitor(request)
+  if (!journalPhotoIdPattern.test(request.params.id)) throw new AppError(404, 'Không tìm thấy ảnh này.')
+  return database.deleteJournalPhoto(guest.id, request.params.id)
+})
+
+app.delete<{ Params: { id: string } }>('/api/journal/:id', async (request) => {
+  const guest = visitor(request)
+  if (!journalPhotoIdPattern.test(request.params.id)) throw new AppError(404, 'Không tìm thấy kỷ niệm này.')
+  return database.deleteJournalEntry(guest.id, request.params.id)
 })
 
 const dist = resolve('dist')
@@ -482,6 +574,9 @@ app.setNotFoundHandler((request, reply) => {
 app.setErrorHandler((error, _request, reply: FastifyReply) => {
   if (error instanceof AppError) return reply.code(error.statusCode).send({ message: error.message })
   const status = error instanceof Error && 'statusCode' in error ? Number(error.statusCode) : 500
+  if (status === 413) {
+    return reply.code(413).send({ message: 'Ảnh tải lên vượt quá dung lượng cho phép.' })
+  }
   if (status >= 400 && status < 500) {
     return reply.code(status).send({ message: 'Dữ liệu gửi lên không hợp lệ.' })
   }

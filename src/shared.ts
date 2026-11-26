@@ -160,9 +160,44 @@ export interface SocialState {
   games: Game[];
 }
 
+export const journalMaxPhotosPerEntry = 4;
+export const journalMaxPhotosPerGuest = 120;
+export const journalMaxPhotoBytes = 1200 * 1024;
+export const journalMaxNoteLength = 300;
+
+export type JournalPhotoMime = 'image/jpeg' | 'image/webp' | 'image/png';
+
+export interface JournalPhoto {
+  id: string;
+  url: string;
+  downloadUrl: string;
+  mime: JournalPhotoMime;
+  width: number;
+  height: number;
+  favorite: boolean;
+  createdAt: string;
+}
+
 export interface JournalEntry {
   id: string;
   title: string;
   body: string;
   createdAt: string;
+  updatedAt?: string | null;
+  tableId?: string | null;
+  tableLabel?: string | null;
+  floor?: FloorId | null;
+  favorite: boolean;
+  photos: JournalPhoto[];
+}
+
+export interface JournalSummary {
+  totalPhotos: number;
+  totalEntries: number;
+  visitCount: number;
+}
+
+export interface JournalState {
+  entries: JournalEntry[];
+  summary: JournalSummary;
 }

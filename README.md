@@ -9,7 +9,8 @@ Xưởng Caffe là web game dành cho khách tại quán. Khách quét mã QR đ
 1. **Vào quán bằng QR.** Mỗi bàn có một mã riêng. Sau khi quét lần đầu, khách nhập tên hiển thị, chọn mẫu nhân vật và phối áo, quần, giày. Nhân vật xuất hiện ở bàn đã quét khi khách bấm **Bước vào phòng**.
 2. **Chat làm quen.** Khách chọn một bàn đang online trên sơ đồ để bắt đầu trò chuyện.
 3. **Mời chơi caro.** Khách gửi lời mời đến bàn khác. Khi lời mời được chấp nhận, hai bên vào ván trên web. Server kiểm tra lượt chơi và ô đánh, rồi gửi nước đi cho hai bên. Khi điện thoại kết nối lại, web lấy trạng thái ván từ server.
-4. **Viết nhật ký tại Xưởng.** Khách ghi lại câu chuyện hoặc cảm xúc trong buổi ghé quán và lưu làm kỷ niệm.
+4. **Nhật ký ảnh cá nhân tại Xưởng.** Mỗi khách có album riêng tư để chụp hoặc tải ảnh kỷ niệm kèm ghi chú ngắn, tự động gắn vị trí bàn/ngày ghé, đánh dấu yêu thích, xem toàn màn hình và tải ảnh về máy.
+5. **Xếp hình trượt ô (1 người chơi).** Khách chọn 1 trong 3 bức tranh thiên nhiên hoạt họa có sẵn hoặc lấy ảnh cá nhân từ thiết bị / Nhật ký, chia thành khung `3×3`, `4×4` hoặc `5×5` (trống 1 ô ở góc) để trượt ô ghép lại tranh hoàn chỉnh. Tiến độ chơi dở và kỷ lục cá nhân được lưu ngay trên trình duyệt.
 
 ## Công nghệ đề xuất
 
@@ -113,4 +114,4 @@ sudo systemctl reload caddy
 curl --fail https://cafe.example.com/api/health
 ```
 
-Tạo mã QR bàn từ `/admin` trên tên miền chính thức. Sao lưu tệp SQLite định kỳ bằng lệnh `.backup` của SQLite và lưu một bản ngoài VPS.
+Tạo mã QR bàn từ `/admin` trên tên miền chính thức. Sao lưu tệp SQLite định kỳ bằng lệnh `.backup` của SQLite cùng thư mục ảnh `/var/lib/xuong-caffe/journal-photos` và lưu một bản ngoài VPS.

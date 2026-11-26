@@ -72,9 +72,8 @@ function CoordinateField({
 
 function Brand() {
   return (
-    <a className="xc-admin__brand" href="/" aria-label="Trang chủ Xưởng Caffe">
-      <img src="/art/brand.webp" alt="" width="42" height="42" />
-      <span>Xưởng Caffe</span>
+    <a className="xc-admin__brand" href="/" aria-label="Trang chủ XConnect">
+      <img src="/art/xconnect.webp" alt="XConnect" />
     </a>
   )
 }
