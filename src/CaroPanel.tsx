@@ -1,22 +1,62 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { findCaroWinningLine, pickBotMove } from './caroBot';
 import type { BotDifficulty } from './caroBot';
 import { CharacterSprite } from './CharacterSprite';
 import type { OnlinePerson } from './ChatPanel';
-import { caroEmojis } from './shared';
+import { caroBoardSize, caroEmojis } from './shared';
 import type { CaroEmoji, CaroEmojiEvent, Game, Invite, TableCharacter } from './shared';
 import { playCaroMoveSound, playCaroWinSound } from './sound';
 import './caro-panel.css';
 
-const BOARD_SIZE = 15;
+const BOARD_SIZE = caroBoardSize;
 const TURN_SECONDS = 30;
-const STAR_POINTS = new Set([
-  3 * BOARD_SIZE + 3,
-  3 * BOARD_SIZE + 11,
-  7 * BOARD_SIZE + 7,
-  11 * BOARD_SIZE + 3,
-  11 * BOARD_SIZE + 11,
-]);
+const OVERSCAN_CELLS = 2;
+const ZOOM_LEVELS = [
+  { label: '1x', cell: 30 },
+  { label: '1.3x', cell: 39 },
+  { label: '0.75x', cell: 22 },
+] as const;
+
+type VisibleRange = {
+  rowStart: number;
+  rowEnd: number;
+  colStart: number;
+  colEnd: number;
+};
+
+function buildStarPoints(size: number): Set<number> {
+  const center = Math.floor(size / 2);
+  const points = new Set<number>([center * size + center]);
+  if (size >= 30) {
+    const offsets = [-20, -10, 0, 10, 20];
+    for (const dy of offsets) {
+      for (const dx of offsets) {
+        const r = center + dy;
+        const c = center + dx;
+        if (r >= 2 && r <= size - 3 && c >= 2 && c <= size - 3) {
+          points.add(r * size + c);
+        }
+      }
+    }
+  } else if (size === 15) {
+    for (const r of [3, 11]) {
+      for (const c of [3, 11]) points.add(r * size + c);
+    }
+  }
+  return points;
+}
+
+function defaultRangeAroundCenter(size: number): VisibleRange {
+  const center = Math.floor(size / 2);
+  const radius = 12;
+  return {
+    rowStart: Math.max(0, center - radius),
+    rowEnd: Math.min(size - 1, center + radius),
+    colStart: Math.max(0, center - radius),
+    colEnd: Math.min(size - 1, center + radius),
+  };
+}
 
 const difficultyLabels: Record<BotDifficulty, string> = {
   easy: 'Dễ',
@@ -184,8 +224,11 @@ export function CaroPanel({
   });
   const [botDifficulty, setBotDifficulty] = useState<BotDifficulty>('medium');
   const [botGame, setBotGame] = useState<BotGameState | null>(null);
+  const [botRoundSeq, setBotRoundSeq] = useState(0);
   const [botThinking, setBotThinking] = useState(false);
-  const [zoomed, setZoomed] = useState(false);
+  const [zoomIndex, setZoomIndex] = useState(0);
+  const [visibleRange, setVisibleRange] = useState<VisibleRange>(() => defaultRangeAroundCenter(BOARD_SIZE));
+  const [offTarget, setOffTarget] = useState(false);
   const [confirmResign, setConfirmResign] = useState(false);
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [floats, setFloats] = useState<FloatingEmoji[]>([]);
@@ -195,6 +238,9 @@ export function CaroPanel({
   const prevGameIds = useRef<Set<string>>(new Set(games.map((g) => g.id)));
   const boardViewportRef = useRef<HTMLDivElement>(null);
   const centeredMatchKey = useRef<string>('');
+  const prevLastMoveRef = useRef<number | null>(null);
+  const prevCellRef = useRef<number>(ZOOM_LEVELS[0].cell);
+  const scrollRafRef = useRef<number | null>(null);
   const dragRef = useRef<{ active: boolean; moved: boolean; startX: number; startY: number; scrollLeft: number; scrollTop: number }>({
     active: false, moved: false, startX: 0, startY: 0, scrollLeft: 0, scrollTop: 0,
   });
@@ -330,33 +376,149 @@ export function CaroPanel({
     };
   }, [view.kind, botGame]);
 
-  // Center board viewport cleanly when opening a match or toggling zoom
-  const matchKey = view.kind === 'pvp'
-    ? `pvp:${activePvpGame?.id ?? ''}:${zoomed ? 'z' : 'n'}`
+  const activeBoardSize = view.kind === 'pvp' && activePvpGame ? activePvpGame.size : BOARD_SIZE;
+  const activeLastMove = view.kind === 'pvp'
+    ? (activePvpGame?.lastMove ?? null)
     : view.kind === 'bot'
-      ? `bot:${botGame?.difficulty ?? ''}:${zoomed ? 'z' : 'n'}`
+      ? (botGame?.lastMove ?? null)
+      : null;
+  const centerIndex = Math.floor(activeBoardSize / 2) * activeBoardSize + Math.floor(activeBoardSize / 2);
+  const cellPx = ZOOM_LEVELS[zoomIndex].cell;
+
+  const syncViewport = useCallback(() => {
+    const node = boardViewportRef.current;
+    if (!node) return;
+    const width = node.clientWidth;
+    const height = node.clientHeight;
+    if (width <= 0 || height <= 0) return;
+
+    const colStart = Math.max(0, Math.floor(node.scrollLeft / cellPx) - OVERSCAN_CELLS);
+    const colEnd = Math.min(activeBoardSize - 1, Math.ceil((node.scrollLeft + width) / cellPx) + OVERSCAN_CELLS);
+    const rowStart = Math.max(0, Math.floor(node.scrollTop / cellPx) - OVERSCAN_CELLS);
+    const rowEnd = Math.min(activeBoardSize - 1, Math.ceil((node.scrollTop + height) / cellPx) + OVERSCAN_CELLS);
+
+    setVisibleRange((prev) => (
+      prev.rowStart === rowStart && prev.rowEnd === rowEnd && prev.colStart === colStart && prev.colEnd === colEnd
+        ? prev
+        : { rowStart, rowEnd, colStart, colEnd }
+    ));
+
+    const targetIdx = activeLastMove !== null ? activeLastMove : centerIndex;
+    const targetCol = targetIdx % activeBoardSize;
+    const targetRow = Math.floor(targetIdx / activeBoardSize);
+    const tx = (targetCol + 0.5) * cellPx;
+    const ty = (targetRow + 0.5) * cellPx;
+    const vx = node.scrollLeft + width / 2;
+    const vy = node.scrollTop + height / 2;
+    const isOff = Math.abs(tx - vx) > width * 0.42 || Math.abs(ty - vy) > height * 0.42;
+    setOffTarget((prev) => (prev === isOff ? prev : isOff));
+  }, [activeBoardSize, activeLastMove, centerIndex, cellPx]);
+
+  const scrollToCell = useCallback((index: number, behavior: ScrollBehavior = 'auto') => {
+    const node = boardViewportRef.current;
+    if (!node) return;
+    const col = index % activeBoardSize;
+    const row = Math.floor(index / activeBoardSize);
+    const maxLeft = Math.max(0, node.scrollWidth - node.clientWidth);
+    const maxTop = Math.max(0, node.scrollHeight - node.clientHeight);
+    const targetLeft = Math.min(maxLeft, Math.max(0, (col + 0.5) * cellPx - node.clientWidth / 2));
+    const targetTop = Math.min(maxTop, Math.max(0, (row + 0.5) * cellPx - node.clientHeight / 2));
+    if (behavior === 'smooth') {
+      node.scrollTo({ left: targetLeft, top: targetTop, behavior: 'smooth' });
+    } else {
+      node.scrollLeft = targetLeft;
+      node.scrollTop = targetTop;
+      syncViewport();
+    }
+  }, [activeBoardSize, cellPx, syncViewport]);
+
+  // Center board cleanly onto the latest move (or exact center 25,25) when opening a match
+  const matchKey = view.kind === 'pvp' && activePvpGame
+    ? `pvp:${activePvpGame.id}`
+    : view.kind === 'bot' && botGame
+      ? `bot:${botRoundSeq}`
       : '';
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!matchKey) {
       centeredMatchKey.current = '';
+      prevLastMoveRef.current = null;
       return;
     }
     if (centeredMatchKey.current === matchKey) return;
     centeredMatchKey.current = matchKey;
-    const frame = requestAnimationFrame(() => {
-      const node = boardViewportRef.current;
-      if (!node) return;
-      node.scrollLeft = Math.max(0, (node.scrollWidth - node.clientWidth) / 2);
-      node.scrollTop = Math.max(0, (node.scrollHeight - node.clientHeight) / 2);
-    });
+    prevCellRef.current = cellPx;
+    prevLastMoveRef.current = activeLastMove;
+    const target = activeLastMove !== null ? activeLastMove : centerIndex;
+    scrollToCell(target, 'auto');
+    const frame = requestAnimationFrame(() => scrollToCell(target, 'auto'));
     return () => cancelAnimationFrame(frame);
-  }, [matchKey]);
+  }, [matchKey, activeLastMove, centerIndex, cellPx, scrollToCell]);
+
+  // Preserve the exact board coordinate at viewport center when changing zoom level
+  useLayoutEffect(() => {
+    const oldCell = prevCellRef.current;
+    if (oldCell === cellPx) return;
+    prevCellRef.current = cellPx;
+    const node = boardViewportRef.current;
+    if (!node || !matchKey) return;
+    const centerCol = (node.scrollLeft + node.clientWidth / 2) / oldCell;
+    const centerRow = (node.scrollTop + node.clientHeight / 2) / oldCell;
+    const maxLeft = Math.max(0, activeBoardSize * cellPx + 1 - node.clientWidth);
+    const maxTop = Math.max(0, activeBoardSize * cellPx + 1 - node.clientHeight);
+    node.scrollLeft = Math.min(maxLeft, Math.max(0, centerCol * cellPx - node.clientWidth / 2));
+    node.scrollTop = Math.min(maxTop, Math.max(0, centerRow * cellPx - node.clientHeight / 2));
+    syncViewport();
+  }, [cellPx, matchKey, activeBoardSize, syncViewport]);
+
+  // Smoothly pan to a new move if it lands near or outside the current viewport
+  useEffect(() => {
+    if (!matchKey || activeLastMove === null) return;
+    if (prevLastMoveRef.current === activeLastMove) return;
+    prevLastMoveRef.current = activeLastMove;
+    const node = boardViewportRef.current;
+    if (!node) return;
+    const col = activeLastMove % activeBoardSize;
+    const row = Math.floor(activeLastMove / activeBoardSize);
+    const cx = (col + 0.5) * cellPx;
+    const cy = (row + 0.5) * cellPx;
+    const margin = Math.min(cellPx * 2, node.clientWidth * 0.2, node.clientHeight * 0.2);
+    const visible = cx >= node.scrollLeft + margin
+      && cx <= node.scrollLeft + node.clientWidth - margin
+      && cy >= node.scrollTop + margin
+      && cy <= node.scrollTop + node.clientHeight - margin;
+    if (!visible) {
+      scrollToCell(activeLastMove, 'smooth');
+    } else {
+      syncViewport();
+    }
+  }, [matchKey, activeLastMove, activeBoardSize, cellPx, scrollToCell, syncViewport]);
+
+  // Keep virtualized slice updated on container resize
+  useEffect(() => {
+    if (!matchKey) return;
+    const node = boardViewportRef.current;
+    if (!node) return;
+    syncViewport();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => syncViewport());
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+        scrollRafRef.current = null;
+      }
+    };
+  }, [matchKey, syncViewport]);
+
+  const starPoints = useMemo(() => buildStarPoints(activeBoardSize), [activeBoardSize]);
 
   function startBotGame(diff: BotDifficulty) {
     setBotDifficulty(diff);
     setBotGame(createBotMatch(diff, 'X', { mine: 0, opponent: 0 }));
-    setZoomed(false);
+    setBotRoundSeq((seq) => seq + 1);
+    setZoomIndex(0);
     setView({ kind: 'bot' });
     onSelectGameId(undefined);
   }
@@ -421,7 +583,7 @@ export function CaroPanel({
     if (!botGame) return;
     const nextMine: 'X' | 'O' = botGame.mine === 'X' ? 'O' : 'X';
     setBotGame(createBotMatch(botGame.difficulty, nextMine, botGame.score));
-    centeredMatchKey.current = '';
+    setBotRoundSeq((seq) => seq + 1);
   }
 
   function handleEmojiClick(emoji: CaroEmoji) {
@@ -479,8 +641,18 @@ export function CaroPanel({
           ? 'Đối thủ đã đầu hàng'
           : 'Bạn đã đầu hàng';
 
+    const boardSize = activeBoardSize;
+    const zoomLevel = ZOOM_LEVELS[zoomIndex];
+    const visibleCells: { index: number; row: number; col: number }[] = [];
+    for (let row = visibleRange.rowStart; row <= visibleRange.rowEnd; row++) {
+      const rowOffset = row * boardSize;
+      for (let col = visibleRange.colStart; col <= visibleRange.colEnd; col++) {
+        visibleCells.push({ index: rowOffset + col, row, col });
+      }
+    }
+
     return (
-      <section className="caro-match" aria-label="Bàn cờ caro 15×15">
+      <section className="caro-match" aria-label={`Bàn cờ caro ${boardSize}×${boardSize}`}>
         {/* Compact Match Header */}
         <header className="caro-match__head">
           <div className="caro-match__head-left">
@@ -493,23 +665,24 @@ export function CaroPanel({
                 onSelectGameId(undefined);
               }}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 18l-6-6 6-6" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12" />
+                <polyline points="12 19 5 12 12 5" />
               </svg>
             </button>
-            <h1 className="caro-match__title">Caro</h1>
-            <span className="caro-chip">15×15</span>
+            <h1 className="caro-match__title">
+              Caro <span className="caro-match__dot" aria-hidden="true">·</span> {boardSize}×{boardSize}
+            </h1>
           </div>
 
           <div className="caro-match__head-right">
             <button
               type="button"
-              className={`caro-pill-btn${zoomed ? ' caro-pill-btn--active' : ''}`}
-              aria-pressed={zoomed}
-              aria-label={zoomed ? 'Thu về kích thước chuẩn' : 'Phóng to bàn cờ'}
-              onClick={() => setZoomed((prev) => !prev)}
+              className={`caro-pill-btn${zoomIndex !== 0 ? ' caro-pill-btn--active' : ''}`}
+              aria-label={`Thu phóng bàn cờ (hiện tại ${zoomLevel.label})`}
+              onClick={() => setZoomIndex((prev) => (prev + 1) % ZOOM_LEVELS.length)}
             >
-              {zoomed ? '1.4x' : '1x'}
+              {zoomLevel.label}
             </button>
             <button
               type="button"
@@ -523,6 +696,7 @@ export function CaroPanel({
           </div>
         </header>
 
+        <div className="caro-match__body">
         {/* Slim Single-Row Horizontal Score Pill */}
         <div className="caro-scorebar" role="status" aria-live="polite">
           <div className={`caro-scorebar__side caro-scorebar__side--me${!winner && turn === mine ? ' is-turn' : ''}${lowTime && turn === mine ? ' is-low' : ''}`}>
@@ -546,11 +720,19 @@ export function CaroPanel({
           </div>
         </div>
 
-        {/* Expanded Board Container */}
+        {/* Expanded Virtualized 50×50 Board Container */}
         <div className="caro-board-stage">
+          <div className="caro-board-frame">
           <div
             className="caro-board-viewport"
             ref={boardViewportRef}
+            onScroll={() => {
+              if (scrollRafRef.current !== null) return;
+              scrollRafRef.current = requestAnimationFrame(() => {
+                scrollRafRef.current = null;
+                syncViewport();
+              });
+            }}
             onPointerDown={(event) => {
               if (event.pointerType !== 'mouse' || event.button !== 0) return;
               const node = boardViewportRef.current;
@@ -572,37 +754,58 @@ export function CaroPanel({
               const dy = event.clientY - dragRef.current.startY;
               if (!dragRef.current.moved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
                 dragRef.current.moved = true;
+                node.classList.add('is-dragging');
               }
               if (dragRef.current.moved) {
                 node.scrollLeft = dragRef.current.scrollLeft - dx;
                 node.scrollTop = dragRef.current.scrollTop - dy;
               }
             }}
-            onPointerUp={() => { dragRef.current.active = false; }}
-            onPointerCancel={() => { dragRef.current.active = false; }}
-            onPointerLeave={() => { dragRef.current.active = false; }}
+            onPointerUp={() => {
+              dragRef.current.active = false;
+              boardViewportRef.current?.classList.remove('is-dragging');
+            }}
+            onPointerCancel={() => {
+              dragRef.current.active = false;
+              boardViewportRef.current?.classList.remove('is-dragging');
+            }}
+            onPointerLeave={() => {
+              dragRef.current.active = false;
+              boardViewportRef.current?.classList.remove('is-dragging');
+            }}
           >
             <div
-              className={`caro-grid${zoomed ? ' caro-grid--zoomed' : ''}`}
+              className="caro-surface"
               role="group"
-              aria-label="Bàn cờ caro 15×15"
+              aria-label={`Bàn cờ caro ${boardSize}×${boardSize}`}
+              style={{
+                width: `${boardSize * cellPx + 1}px`,
+                height: `${boardSize * cellPx + 1}px`,
+                '--caro-cell': `${cellPx}px`,
+              } as CSSProperties}
             >
-              {board.map((mark, index) => {
+              {visibleCells.map(({ index, row, col }) => {
+                const mark = board[index];
                 const isLast = index === lastMove;
                 const isWin = winSet?.has(index) ?? false;
-                const row = Math.floor(index / BOARD_SIZE) + 1;
-                const col = (index % BOARD_SIZE) + 1;
+                const isStar = !mark && starPoints.has(index);
                 return (
                   <button
                     key={index}
                     type="button"
                     className="caro-cell"
+                    style={{
+                      left: `${col * cellPx + 1}px`,
+                      top: `${row * cellPx + 1}px`,
+                      width: `${cellPx - 1}px`,
+                      height: `${cellPx - 1}px`,
+                    }}
                     data-mark={mark ?? undefined}
-                    data-star={STAR_POINTS.has(index) && !mark ? 'true' : undefined}
+                    data-star={isStar ? (index === centerIndex ? 'center' : 'true') : undefined}
                     data-last={isLast ? 'true' : undefined}
                     data-win={isWin ? 'true' : undefined}
                     disabled={Boolean(mark) || !myTurn || (!isBot && busy)}
-                    aria-label={`Hàng ${row}, cột ${col}${mark ? `, quân ${mark}` : ''}`}
+                    aria-label={`Hàng ${row + 1}, cột ${col + 1}${mark ? `, quân ${mark}` : ''}`}
                     onClick={() => {
                       if (dragRef.current.moved) {
                         dragRef.current.moved = false;
@@ -622,6 +825,26 @@ export function CaroPanel({
               })}
             </div>
           </div>
+          </div>
+
+          {offTarget && (
+            <button
+              type="button"
+              className="caro-recenter-btn"
+              aria-label={lastMove !== null ? 'Về nước vừa đi' : 'Về tâm bàn cờ'}
+              title={lastMove !== null ? 'Về nước vừa đi' : 'Về tâm bàn cờ'}
+              onClick={() => scrollToCell(lastMove !== null ? lastMove : centerIndex, 'smooth')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="7" />
+                <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+                <line x1="12" y1="2" x2="12" y2="5" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+                <line x1="2" y1="12" x2="5" y2="12" />
+                <line x1="19" y1="12" x2="22" y2="12" />
+              </svg>
+            </button>
+          )}
 
           {/* Floating quick emojis */}
           {floats.length > 0 && (
@@ -712,7 +935,10 @@ export function CaroPanel({
                 <button
                   type="button"
                   className="caro-action-pill"
-                  onClick={() => setBotGame(createBotMatch(botGame!.difficulty, botGame!.mine, botGame!.score))}
+                  onClick={() => {
+                    setBotGame(createBotMatch(botGame!.difficulty, botGame!.mine, botGame!.score));
+                    setBotRoundSeq((seq) => seq + 1);
+                  }}
                 >
                   Ván mới
                 </button>
@@ -763,6 +989,7 @@ export function CaroPanel({
             </div>
           </div>
         )}
+        </div>
       </section>
     );
   }
@@ -781,7 +1008,7 @@ export function CaroPanel({
     <section className="caro-lobby" aria-labelledby="caro-title">
       <header className="caro-lobby__head">
         <h1 className="caro-lobby__brand" id="caro-title">
-          <img src="/art/xconnect.webp" alt="XConnect" />
+          <img src="/art/xconnect.webp?v=2" alt="XConnect" />
         </h1>
         <button
           type="button"
@@ -797,12 +1024,13 @@ export function CaroPanel({
       <div className="caro-lobby__body">
         {/* Quick Invite Strip */}
         {checkedIn && onlinePeople.length > 0 && (
-          <div className="caro-section">
-            <div className="caro-section__head">
-              <span>Mời nhanh · Đang online</span>
-              <small>{hasActivePvp ? 'Đang trong ván' : 'Chạm để mời'}</small>
-            </div>
-            <div className="caro-online-strip">
+          <div className="caro-section caro-section--online">
+            <div className="caro-online-strip"
+              onWheel={(event) => {
+                if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && event.currentTarget.scrollWidth > event.currentTarget.clientWidth) {
+                  event.currentTarget.scrollLeft += event.deltaY;
+                }
+              }}>
               {onlinePeople.map((person) => {
                 const pendingInvite = outgoingByPeerId.get(person.id);
                 const disabled = busy || (!pendingInvite && (hasActivePvp || outgoingInvites.length > 0));
@@ -849,7 +1077,7 @@ export function CaroPanel({
                         <strong>{peerName}</strong>
                         <span className="caro-tag">Bàn {labelOf(invite.tableId)}</span>
                       </div>
-                      <p>Mời bạn chơi Caro · 15×15</p>
+                      <p>Mời bạn chơi Caro · {BOARD_SIZE}×{BOARD_SIZE}</p>
                     </div>
                   </div>
                   <div className="caro-invite-card__actions">
@@ -1019,7 +1247,7 @@ export function CaroPanel({
         {/* Gentle note for unseated guests */}
         {!checkedIn && (
           <div className="caro-hint">
-            <span>{joinHint} để mời khách khác trong quán.</span>
+            <span>{joinHint.replace(/\s*để tham gia\.?$/i, '').replace(/\.$/, '')} để mời khách khác trong quán.</span>
             {hasSeat && (
               <button type="button" className="caro-hint__cta" onClick={onOpenCharacter}>
                 Tạo nhân vật

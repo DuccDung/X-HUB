@@ -445,43 +445,45 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
         </header>
 
         <form className="jp-upload__body" onSubmit={(event) => void savePhotos(event)}>
-          {activeDraft ? (
-            <div className="jp-preview">
-              <img src={activeDraft.previewUrl} alt={`Ảnh xem trước ${activeDraftIdx + 1}`} />
-              <span className="jp-preview__idx">{activeDraftIdx + 1} / {drafts.length}</span>
-              <button
-                type="button"
-                className="jp-preview__del"
-                aria-label="Bỏ ảnh này"
-                disabled={saving}
-                onClick={() => removeDraft(activeDraftIdx)}
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          ) : (
-            <div className="jp-preview jp-preview--empty">
-              <div className="jp-preview__empty-inner">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="16" rx="2.5" />
-                  <circle cx="8.5" cy="9.5" r="1.4" />
-                  <path d="m21 15-4.5-4.5L7 20" />
-                </svg>
-                <strong>{compressing ? 'Đang xử lý ảnh…' : 'Chọn hoặc chụp ảnh kỷ niệm'}</strong>
-                <p>Tối đa {journalMaxPhotosPerEntry} ảnh mỗi lần lưu · Tự động tối ưu dung lượng</p>
-                <div className="jp-preview__empty-actions">
-                  <button type="button" className="jp-btn jp-btn--green" disabled={compressing} onClick={() => libraryInputRef.current?.click()}>
-                    Chọn từ thư viện
-                  </button>
-                  <button type="button" className="jp-btn" disabled={compressing} onClick={() => cameraInputRef.current?.click()}>
-                    Chụp ảnh
-                  </button>
+          <div className="jp-preview-frame">
+            {activeDraft ? (
+              <div className="jp-preview">
+                <img src={activeDraft.previewUrl} alt={`Ảnh xem trước ${activeDraftIdx + 1}`} />
+                <span className="jp-preview__idx">{activeDraftIdx + 1} / {drafts.length}</span>
+                <button
+                  type="button"
+                  className="jp-preview__del"
+                  aria-label="Bỏ ảnh này"
+                  disabled={saving}
+                  onClick={() => removeDraft(activeDraftIdx)}
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ) : (
+              <div className="jp-preview jp-preview--empty">
+                <div className="jp-preview__empty-inner">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+                    <circle cx="8.5" cy="9.5" r="1.4" />
+                    <path d="m21 15-4.5-4.5L7 20" />
+                  </svg>
+                  <strong>{compressing ? 'Đang xử lý ảnh…' : 'Chọn hoặc chụp ảnh kỷ niệm'}</strong>
+                  <p>Tối đa {journalMaxPhotosPerEntry} ảnh mỗi lần lưu · Tự động tối ưu dung lượng</p>
+                  <div className="jp-preview__empty-actions">
+                    <button type="button" className="jp-btn jp-btn--green" disabled={compressing} onClick={() => libraryInputRef.current?.click()}>
+                      Chọn từ thư viện
+                    </button>
+                    <button type="button" className="jp-btn" disabled={compressing} onClick={() => cameraInputRef.current?.click()}>
+                      Chụp ảnh
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="jp-strip" role="list" aria-label="Ảnh đã chọn">
             {drafts.map((item, index) => (
@@ -505,7 +507,7 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
                   disabled={saving || compressing}
                   onClick={() => libraryInputRef.current?.click()}
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <rect x="3" y="4" width="18" height="16" rx="2.5" />
                     <circle cx="8.5" cy="9.5" r="1.4" />
                     <path d="m21 15-4.5-4.5L7 20" />
@@ -518,7 +520,7 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
                   disabled={saving || compressing}
                   onClick={() => cameraInputRef.current?.click()}
                 >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M4 8a2 2 0 0 1 2-2h2.2l1.4-2h4.8l1.4 2H18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
                     <circle cx="12" cy="13" r="3" />
                   </svg>
@@ -531,48 +533,53 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
           {compressing && <p className="jp-status" role="status">Đang tối ưu dung lượng ảnh…</p>}
           {uploadError && <p className="form-error" role="alert">{uploadError}</p>}
 
-          <div className="jp-note-box">
-            <div className="jp-note-box__top">
-              <label htmlFor="jp-note-input" className="jp-note-box__label">Ghi chú ngắn (tùy chọn)</label>
-              <span className="jp-note-box__count">{[...note].length} / {journalMaxNoteLength}</span>
+          <div className="jp-form-card">
+            <div className="jp-note-box">
+              <div className="jp-note-box__top">
+                <label htmlFor="jp-note-input" className="jp-note-box__label">Ghi chú ngắn (tùy chọn)</label>
+                <span className="jp-note-box__count">{[...note].length} / {journalMaxNoteLength}</span>
+              </div>
+              <textarea
+                id="jp-note-input"
+                className="jp-note-box__input"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="Thêm vài chữ kỷ niệm cho khoảnh khắc này…"
+                maxLength={journalMaxNoteLength}
+                rows={2}
+                disabled={saving}
+              />
             </div>
-            <textarea
-              id="jp-note-input"
-              className="jp-note-box__input"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="Thêm vài chữ kỷ niệm cho khoảnh khắc này…"
-              maxLength={journalMaxNoteLength}
-              rows={2}
-              disabled={saving}
-            />
+
+            {currentSeat && (
+              <>
+                <div className="jp-divider" aria-hidden="true" />
+                <div className="jp-seat-row">
+                  <span className="jp-seat-row__info">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 21s-6-5.3-6-10a6 6 0 1 1 12 0c0 4.7-6 10-6 10Z" />
+                      <circle cx="12" cy="11" r="2" />
+                    </svg>
+                    <span>Bàn {currentSeat.label}, Tầng {currentSeat.floor} <small>· {seatDateLabel}</small></span>
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={attachTable}
+                    aria-label="Gắn vị trí bàn hiện tại"
+                    className={`jp-switch${attachTable ? ' is-on' : ''}`}
+                    disabled={saving}
+                    onClick={() => setAttachTable((value) => !value)}
+                  >
+                    <span className="jp-switch__knob" />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
 
-          {currentSeat && (
-            <div className="jp-seat-row">
-              <span className="jp-seat-row__info">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 21s-6-5.3-6-10a6 6 0 1 1 12 0c0 4.7-6 10-6 10Z" />
-                  <circle cx="12" cy="11" r="2" />
-                </svg>
-                <span>Bàn {currentSeat.label}, Tầng {currentSeat.floor} <small>· {seatDateLabel}</small></span>
-              </span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={attachTable}
-                aria-label="Gắn vị trí bàn hiện tại"
-                className={`jp-switch${attachTable ? ' is-on' : ''}`}
-                disabled={saving}
-                onClick={() => setAttachTable((value) => !value)}
-              >
-                <span className="jp-switch__knob" />
-              </button>
-            </div>
-          )}
-
           <div className="jp-priv">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <rect x="5" y="11" width="14" height="10" rx="2" />
               <path d="M8 11V7a4 4 0 0 1 8 0v4" />
             </svg>
@@ -589,23 +596,12 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
       {hiddenFileInputs}
 
       <header className="jp-head">
-        <div className="jp-head__left">
-          <h1 id="jp-title" className="jp-head__brand">
-            <img src="/art/xconnect.webp" alt="XConnect" />
-          </h1>
-          <span className="jp-head__sub">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="5" y="11" width="14" height="10" rx="2" />
-              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-            </svg>
-            {needsQr
-              ? 'Album riêng của bạn'
-              : `Album riêng · ${summary.totalPhotos} ảnh${summary.visitCount > 0 ? ` · ${summary.visitCount} lần ghé` : ''}`}
-          </span>
-        </div>
+        <h1 id="jp-title" className="jp-head__brand">
+          <img src="/art/xconnect.webp?v=2" alt="XConnect" />
+        </h1>
         {!needsQr && data && (
           <button type="button" className="jp-add-btn" onClick={openUpload}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 5v14M5 12h14" />
             </svg>
             <span>Lưu ảnh</span>
@@ -614,57 +610,72 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
       </header>
 
       {!needsQr && data && (
-        <div className="jp-bar">
-          <div className="jp-tabs" role="tablist" aria-label="Lọc ảnh nhật ký">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={filter === 'all'}
-              className={`jp-tab${filter === 'all' ? ' is-active' : ''}`}
-              onClick={() => setFilter('all')}
-            >
-              Tất cả
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={filter === 'favorite'}
-              className={`jp-tab${filter === 'favorite' ? ' is-active' : ''}`}
-              onClick={() => setFilter('favorite')}
-            >
-              Yêu thích
-            </button>
+        <div className="jp-controls">
+          <div className="jp-bar">
+            <div className="jp-tabs" role="tablist" aria-label="Lọc ảnh nhật ký">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={filter === 'all'}
+                className={`jp-tab${filter === 'all' ? ' is-active' : ''}`}
+                onClick={() => setFilter('all')}
+              >
+                Tất cả
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={filter === 'favorite'}
+                className={`jp-tab${filter === 'favorite' ? ' is-active' : ''}`}
+                onClick={() => setFilter('favorite')}
+              >
+                <svg viewBox="0 0 24 24" fill={filter === 'favorite' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 20.5s-7.5-4.7-9.3-9A5.4 5.4 0 0 1 12 6.2a5.4 5.4 0 0 1 9.3 5.3c-1.8 4.3-9.3 9-9.3 9Z" />
+                </svg>
+                <span>Yêu thích</span>
+              </button>
+            </div>
+            <div className="jp-view-switch" role="group" aria-label="Chế độ hiển thị ảnh">
+              <button
+                type="button"
+                className={`jp-view-btn${viewMode === 'album' ? ' is-active' : ''}`}
+                aria-pressed={viewMode === 'album'}
+                aria-label="Xem theo từng lần ghé"
+                title="Theo từng lần ghé"
+                onClick={() => setViewMode('album')}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="8" height="18" rx="1.5" />
+                  <rect x="14" y="3" width="7" height="8" rx="1.5" />
+                  <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className={`jp-view-btn${viewMode === 'grid' ? ' is-active' : ''}`}
+                aria-pressed={viewMode === 'grid'}
+                aria-label="Xem lưới vuông"
+                title="Lưới ảnh"
+                onClick={() => setViewMode('grid')}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3.5" y="3.5" width="7" height="7" rx="1.2" />
+                  <rect x="13.5" y="3.5" width="7" height="7" rx="1.2" />
+                  <rect x="3.5" y="13.5" width="7" height="7" rx="1.2" />
+                  <rect x="13.5" y="13.5" width="7" height="7" rx="1.2" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <div className="jp-view-switch" role="group" aria-label="Chế độ hiển thị ảnh">
-            <button
-              type="button"
-              className={`jp-view-btn${viewMode === 'album' ? ' is-active' : ''}`}
-              aria-pressed={viewMode === 'album'}
-              aria-label="Xem theo từng lần ghé"
-              title="Theo từng lần ghé"
-              onClick={() => setViewMode('album')}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="8" height="18" rx="1.5" />
-                <rect x="14" y="3" width="7" height="8" rx="1.5" />
-                <rect x="14" y="14" width="7" height="7" rx="1.5" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className={`jp-view-btn${viewMode === 'grid' ? ' is-active' : ''}`}
-              aria-pressed={viewMode === 'grid'}
-              aria-label="Xem lưới vuông"
-              title="Lưới ảnh"
-              onClick={() => setViewMode('grid')}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3.5" y="3.5" width="7" height="7" rx="1.2" />
-                <rect x="13.5" y="3.5" width="7" height="7" rx="1.2" />
-                <rect x="3.5" y="13.5" width="7" height="7" rx="1.2" />
-                <rect x="13.5" y="13.5" width="7" height="7" rx="1.2" />
-              </svg>
-            </button>
+
+          <div className="jp-meta-strip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="5" y="11" width="14" height="10" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+            </svg>
+            <span>
+              {`Album riêng tư · ${summary.totalPhotos} ảnh${summary.visitCount > 0 ? ` · ${summary.visitCount} lần ghé Xưởng` : ''}`}
+            </span>
           </div>
         </div>
       )}
@@ -753,12 +764,24 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
               const seatMeta = formatSeatMeta(entry);
               const metaStamp = `${timeFormat.format(new Date(entry.createdAt))}${seatMeta ? ` · ${seatMeta}` : ''}`;
 
+              const metaPill = (
+                <span className="jp-group__meta">
+                  {seatMeta && (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 21s-6-5.3-6-10a6 6 0 1 1 12 0c0 4.7-6 10-6 10Z" />
+                      <circle cx="12" cy="11" r="2" />
+                    </svg>
+                  )}
+                  <span>{metaStamp}</span>
+                </span>
+              );
+
               if (entry.photos.length === 0) {
                 return (
                   <article key={entry.id} className="jp-legacy-card">
                     <div className="jp-group__head">
                       <span className="jp-group__date">{formatGroupDate(entry.createdAt)}</span>
-                      <span className="jp-group__meta">{metaStamp}</span>
+                      {metaPill}
                     </div>
                     {entry.title && <h2 className="jp-legacy-card__title">{entry.title}</h2>}
                     <p className="jp-legacy-card__body">{entry.body}</p>
@@ -781,7 +804,7 @@ export function JournalPanel({ currentSeat }: { currentSeat?: CurrentSeat | null
                 <article key={entry.id} className="jp-group">
                   <div className="jp-group__head">
                     <span className="jp-group__date">{formatGroupDate(entry.createdAt)}</span>
-                    <span className="jp-group__meta">{metaStamp}</span>
+                    {metaPill}
                   </div>
                   <div className={layoutClass}>
                     {entry.photos.map((photo, index) => (

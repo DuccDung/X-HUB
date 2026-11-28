@@ -116,6 +116,8 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export const caroBoardSize = 50;
+
 export const caroEmojis = ['👏', '😅', '☕'] as const;
 export type CaroEmoji = typeof caroEmojis[number];
 

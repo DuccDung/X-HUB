@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { caroBoardSize } from '../src/shared.ts'
 import type { ChatMessage, ChatParticipant, ChatReceipt, Conversation, Game, Invite, SocialState } from '../src/shared.ts'
 import { AppError } from './database.ts'
 
@@ -67,7 +68,7 @@ type GameRecord = {
   updatedAt: number
 }
 
-const boardSize = 15
+const boardSize = caroBoardSize
 const inviteLifetime = 2 * 60 * 1000
 const gameLifetime = 45 * 60 * 1000
 const chatLifetime = 12 * 60 * 60 * 1000

@@ -300,8 +300,9 @@ export function ChatPanel({
         <div className="chat-thread">
           <div className="chat-thread__head">
             <button type="button" className="chat-back" onClick={() => onSelectTarget(undefined)} aria-label="Quay lại">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M15 18l-6-6 6-6" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="19" y1="12" x2="5" y2="12" />
+                <polyline points="12 19 5 12 12 5" />
               </svg>
             </button>
             {kind === 'direct' ? (
@@ -327,17 +328,38 @@ export function ChatPanel({
                 </span>
               )}
             </div>
-            {kind === 'group' && activeConversation && (
-              <button type="button" className="chat-icon-btn" aria-label="Thành viên nhóm" aria-expanded={showMembers}
-                onClick={() => setShowMembers((open) => !open)}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M16 19v-1a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v1" />
-                  <circle cx="10" cy="8.5" r="3" />
-                  <path d="M20 19v-1a3 3 0 0 0-2.2-2.9" />
-                  <path d="M15.2 5.6a3 3 0 0 1 0 5.8" />
-                </svg>
+            <div className="chat-thread__actions">
+              {kind === 'group' && activeConversation && (
+                <button type="button" className="chat-icon-btn" aria-label="Thành viên nhóm" aria-expanded={showMembers}
+                  onClick={() => setShowMembers((open) => !open)}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M16 19v-1a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v1" />
+                    <circle cx="10" cy="8.5" r="3" />
+                    <path d="M20 19v-1a3 3 0 0 0-2.2-2.9" />
+                    <path d="M15.2 5.6a3 3 0 0 1 0 5.8" />
+                  </svg>
+                </button>
+              )}
+              <button type="button" className={`chat-icon-btn${soundEnabled ? '' : ' chat-icon-btn--muted'}`}
+                title={soundEnabled ? 'Tắt âm thông báo' : 'Bật âm thông báo'}
+                aria-label={soundEnabled ? 'Tắt âm thông báo' : 'Bật âm thông báo'}
+                aria-pressed={soundEnabled}
+                onClick={onToggleSound}>
+                {soundEnabled ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                    <path d="M19 5.5a9.5 9.5 0 0 1 0 13" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <line x1="22" y1="9" x2="16" y2="15" />
+                    <line x1="16" y1="9" x2="22" y2="15" />
+                  </svg>
+                )}
               </button>
-            )}
+            </div>
           </div>
 
           {kind === 'group' && activeConversation && showMembers && (
@@ -395,23 +417,27 @@ export function ChatPanel({
                     <span>· B{labelOf(message.tableId)}</span>
                   </div>
                 )}
-                <div className="chat-msg__bubble">{message.text}</div>
-                <div className="chat-msg__meta">
+                <div className="chat-msg__bubble">
+                  <span className="chat-msg__text">{message.text}</span>
                   <time className="chat-msg__time" dateTime={message.createdAt}>
                     {timeFormat.format(new Date(message.createdAt))}
                   </time>
-                  {message.mine && index === lastMineIndex && receiptText && (
-                    <span className={`chat-msg__receipt${seenReaders.length > 0 ? ' chat-msg__receipt--seen' : ''}`}>
-                      · {seenReaders.length > 0 ? '✓✓' : '✓'} {receiptText}
-                    </span>
-                  )}
                 </div>
+                {message.mine && index === lastMineIndex && receiptText && (
+                  <div className="chat-msg__meta">
+                    <span className={`chat-msg__receipt${seenReaders.length > 0 ? ' chat-msg__receipt--seen' : ''}`}>
+                      {receiptText}
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
             {activeTypingNames.length > 0 && (
               <div className="chat-typing" role="status" aria-live="polite">
-                <span className="chat-typing__dots" aria-hidden="true"><i /><i /><i /></span>
-                <span>{formatTyping(activeTypingNames)}</span>
+                <span className="chat-typing__bubble" aria-hidden="true">
+                  <span className="chat-typing__dots"><i /><i /><i /></span>
+                </span>
+                <span className="chat-typing__text">{formatTyping(activeTypingNames)}</span>
               </div>
             )}
             <span ref={feedEnd} />
@@ -422,7 +448,7 @@ export function ChatPanel({
               <>
                 <form className="chat-compose__form" onSubmit={submitMessage}>
                   <input value={text} onChange={(event) => handleTextChange(event.target.value)}
-                    placeholder="Nhắn tin…" aria-label="Nội dung tin nhắn" maxLength={500} />
+                    placeholder={kind === 'direct' ? `Nhắn cho ${title}...` : 'Nhắn tin…'} aria-label="Nội dung tin nhắn" maxLength={500} />
                   <button type="submit" className="chat-compose__send" aria-label="Gửi" disabled={busy || !text.trim()}>
                     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2 .4 6.4Z" />
@@ -468,7 +494,7 @@ export function ChatPanel({
     <section className="chat-panel" aria-labelledby="chat-title">
       <div className="chat-list-head">
         <h1 id="chat-title" className="chat-list-head__brand">
-          <img src="/art/xconnect.webp" alt="XConnect" />
+          <img src="/art/xconnect.webp?v=2" alt="XConnect" />
         </h1>
         <div className="chat-list-head__actions">
           <button type="button" className={`chat-icon-btn${soundEnabled ? '' : ' chat-icon-btn--muted'}`}
@@ -507,7 +533,12 @@ export function ChatPanel({
       <div className="chat-list-scroll">
         {checkedIn && onlinePeople.length > 0 && (
           <>
-            <div className="chat-online-row" role="list" aria-label="Khách đang online">
+            <div className="chat-online-row" role="list" aria-label="Khách đang online"
+              onWheel={(event) => {
+                if (Math.abs(event.deltaY) > Math.abs(event.deltaX) && event.currentTarget.scrollWidth > event.currentTarget.clientWidth) {
+                  event.currentTarget.scrollLeft += event.deltaY;
+                }
+              }}>
               {onlinePeople.map((person) => (
                 <button key={person.id} type="button" className="chat-online-person" role="listitem"
                   title={`${person.displayName} · Bàn ${person.tableLabel}`}
@@ -569,12 +600,12 @@ export function ChatPanel({
                   <span className="chat-row__body">
                     <span className="chat-row__top">
                       <span className="chat-row__name">
-                        {conversation.name}
-                        <span className="chat-row__sub">
-                          {conversation.kind === 'group'
-                            ? ` · ${conversation.members.length}`
-                            : conversation.tableId ? ` · B${labelOf(conversation.tableId)}` : ''}
-                        </span>
+                        <span className="chat-row__name-text">{conversation.name}</span>
+                        {conversation.kind === 'group' ? (
+                          <span className="chat-row__sub">· Nhóm {conversation.members.length}</span>
+                        ) : conversation.tableId ? (
+                          <span className="chat-row__table-pill">B{labelOf(conversation.tableId)}</span>
+                        ) : null}
                       </span>
                       <time className="chat-row__time" dateTime={last?.createdAt ?? conversation.updatedAt}>
                         {timeFormat.format(new Date(last?.createdAt ?? conversation.updatedAt))}

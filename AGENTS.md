@@ -50,7 +50,7 @@ Socket.IO phát cập nhật hoạt động và sơ đồ cho khách. Thông bá
 - Sơ đồ, mã QR, khách, hồ sơ nhân vật và metadata nhật ký được lưu trong SQLite; tệp ảnh nhật ký riêng tư của từng khách được lưu ở `<dirname(XUONG_DB)>/journal-photos/` (mặc định `data/journal-photos/`, có thể đổi qua `XUONG_JOURNAL_DIR`). `data/`, file SQLite và WAL bị `.gitignore` loại trừ; không commit dữ liệu cá nhân hoặc bản database của máy phát triển.
 - Trạng thái online, chat, lời mời và ván caro nằm trong RAM, mất khi server khởi động lại. Ghế khách hết hiệu lực sau 12 giờ; lời mời sau 2 phút; ván caro sau 45 phút không hoạt động.
 - Chưa có hệ thống migration riêng; hiện schema dùng `CREATE TABLE IF NOT EXISTS` kèm nâng cấp bổ sung cột tương thích ngược (như trường tầng bàn và các cột mở rộng của `journal_entries`). Nếu thay đổi schema, hãy lên kế hoạch migration tương thích với database đã tồn tại.
-- Sơ đồ giới hạn 80 bàn và 12 ghế mỗi bàn. Caro dùng bàn 15×15, nối 5 quân để thắng. Tin nhắn tối đa 500 ký tự; nhật ký ảnh lưu tối đa 4 ảnh/lần, 120 ảnh/khách, mỗi ảnh ≤ 1,2 MB sau nén (kiểm tra magic bytes JPG/PNG/WebP), ghi chú ngắn tối đa 300 ký tự (bài chữ cũ vẫn giữ giới hạn 4.000 ký tự).
+- Sơ đồ giới hạn 80 bàn và 12 ghế mỗi bàn. Caro dùng bàn 50×50, nối 5 quân để thắng. Tin nhắn tối đa 500 ký tự; nhật ký ảnh lưu tối đa 4 ảnh/lần, 120 ảnh/khách, mỗi ảnh ≤ 1,2 MB sau nén (kiểm tra magic bytes JPG/PNG/WebP), ghi chú ngắn tối đa 300 ký tự (bài chữ cũ vẫn giữ giới hạn 4.000 ký tự).
 
 ## Ghi chú khi làm việc
 

@@ -3,6 +3,7 @@ import type { ChangeEvent, CSSProperties, TouchEvent } from 'react';
 import { api } from './api';
 import {
   BUILT_IN_PUZZLES,
+  countCorrectTiles,
   createShuffledBoard,
   isPuzzleSolved,
   loadPuzzleRecords,
@@ -341,12 +342,13 @@ export function PuzzlePanel({
                 aria-label="Về danh sách tranh"
                 onClick={() => setView({ kind: 'gallery' })}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M15 18l-6-6 6-6" />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5" />
+                  <path d="M12 19l-7-7 7-7" />
                 </svg>
               </button>
               <h1 id="pz-win-title" className="pz-head__title">Hoàn thành</h1>
-              {view.isNewRecord && <span className="pz-chip pz-chip--green">Kỷ lục mới</span>}
+              {view.isNewRecord && <span className="pz-chip pz-chip--green">★ Kỷ lục mới</span>}
             </div>
             <button
               type="button"
@@ -359,59 +361,61 @@ export function PuzzlePanel({
             </button>
           </header>
 
-          <div className="pz-win__frame">
-            <div className="pz-win__img">
-              <img src={game.artSrc} alt={game.artTitle} />
+          <div className="pz-win__body">
+            <div className="pz-win__frame">
+              <div className="pz-win__img">
+                <img src={game.artSrc} alt={game.artTitle} />
+              </div>
+              <span className="pz-win__badge">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+                Ô góc cuối đã khớp trọn tranh!
+              </span>
             </div>
-            <span className="pz-win__badge">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M20 6 9 17l-5-5" />
-              </svg>
-              Ô góc cuối đã khớp trọn tranh!
-            </span>
-          </div>
 
-          <div className="pz-win__copy">
-            <h2>{game.artTitle}</h2>
-            <p>
-              {view.isNewRecord
-                ? `Bạn vừa lập kỷ lục mới ở khung trượt ${game.size}×${game.size}.`
-                : `Bạn đã hoàn thành khung trượt ${game.size}×${game.size}.`}
-            </p>
-          </div>
+            <div className="pz-win__copy">
+              <h2>{game.artTitle}</h2>
+              <p>
+                {view.isNewRecord
+                  ? `Bạn vừa lập kỷ lục mới ở khung trượt ${game.size}×${game.size}.`
+                  : `Bạn đã hoàn thành khung trượt ${game.size}×${game.size}.`}
+              </p>
+            </div>
 
-          <div className="pz-win__stats">
-            <div className={`pz-win__stat${view.isNewRecord ? ' is-best' : ''}`}>
-              <span>Thời gian</span>
-              <strong>{formatTimer(Math.max(1, game.elapsedSec))}</strong>
+            <div className="pz-win__stats">
+              <div className={`pz-win__stat${view.isNewRecord ? ' is-best' : ''}`}>
+                <span>Thời gian</span>
+                <strong>{formatTimer(Math.max(1, game.elapsedSec))}</strong>
+              </div>
+              <div className={`pz-win__stat${view.isNewRecord ? ' is-best' : ''}`}>
+                <span>Số bước</span>
+                <strong>{game.moves}</strong>
+              </div>
+              <div className="pz-win__stat">
+                <span>Khung</span>
+                <strong>{game.size}×{game.size}</strong>
+              </div>
             </div>
-            <div className={`pz-win__stat${view.isNewRecord ? ' is-best' : ''}`}>
-              <span>Số bước</span>
-              <strong>{game.moves}</strong>
-            </div>
-            <div className="pz-win__stat">
-              <span>Khung</span>
-              <strong>{game.size}×{game.size}</strong>
-            </div>
-          </div>
 
-          <div className="pz-win__actions">
-            {nextHarderSize && (
-              <button
-                type="button"
-                className="pz-btn pz-btn--green pz-btn--full"
-                onClick={() => reshuffleCurrent(nextHarderSize)}
-              >
-                Thử sức khung khó hơn ({nextHarderSize}×{nextHarderSize})
-              </button>
-            )}
-            <div className="pz-win__row">
-              <button type="button" className="pz-btn" onClick={() => reshuffleCurrent()}>
-                Xếp lại
-              </button>
-              <button type="button" className="pz-btn" onClick={() => setView({ kind: 'gallery' })}>
-                Chọn tranh khác
-              </button>
+            <div className="pz-win__actions">
+              {nextHarderSize && (
+                <button
+                  type="button"
+                  className="pz-btn pz-btn--green pz-btn--full"
+                  onClick={() => reshuffleCurrent(nextHarderSize)}
+                >
+                  Thử sức khung khó hơn ({nextHarderSize}×{nextHarderSize})
+                </button>
+              )}
+              <div className="pz-win__row">
+                <button type="button" className="pz-btn" onClick={() => reshuffleCurrent()}>
+                  Xếp lại
+                </button>
+                <button type="button" className="pz-btn" onClick={() => setView({ kind: 'gallery' })}>
+                  Chọn tranh khác
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -422,6 +426,7 @@ export function PuzzlePanel({
   // ==================== SCREEN 2: PLAYING SLIDING PUZZLE ====================
   if (view.kind === 'playing' && game) {
     const totalTiles = game.size * game.size - 1;
+    const correctCount = countCorrectTiles(game.board);
     const emptyPos = game.board.indexOf(-1);
     const emptyRow = Math.floor(emptyPos / game.size);
     const emptyCol = emptyPos % game.size;
@@ -441,8 +446,9 @@ export function PuzzlePanel({
                   setView({ kind: 'gallery' });
                 }}
               >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M15 18l-6-6 6-6" />
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M19 12H5" />
+                  <path d="M12 19l-7-7 7-7" />
                 </svg>
               </button>
               <h1 id="pz-play-title" className="pz-head__title">{game.artTitle}</h1>
@@ -459,135 +465,155 @@ export function PuzzlePanel({
             </button>
           </header>
 
-          <div className="pz-board-wrap">
-            <div
-              className="pz-board-frame"
-              data-size={game.size}
-              style={{ '--pz-size': game.size } as CSSProperties}
-              onTouchStart={handleBoardTouchStart}
-              onTouchEnd={handleBoardTouchEnd}
-            >
-              <div className="pz-board-well" role="group" aria-label={`Khung trượt ${game.size}×${game.size}`}>
-                {/* Recessed empty slot underneath */}
-                <div
-                  className="pz-empty-well"
-                  aria-hidden="true"
-                  style={{ '--row': emptyRow, '--col': emptyCol } as CSSProperties}
-                >
-                  <div className="pz-empty-well__inner" />
-                </div>
-
-                {/* Sliding picture tiles keyed by tileId for smooth transform transitions */}
-                {Array.from({ length: totalTiles }, (_, tileId) => {
-                  const pos = game.board.indexOf(tileId);
-                  if (pos < 0) return null;
-                  const row = Math.floor(pos / game.size);
-                  const col = pos % game.size;
-                  const targetRow = Math.floor(tileId / game.size);
-                  const targetCol = tileId % game.size;
-                  const bgPos = `${(targetCol / (game.size - 1)) * 100}% ${(targetRow / (game.size - 1)) * 100}%`;
-                  const isAdjacent = Math.abs(row - emptyRow) + Math.abs(col - emptyCol) === 1;
-                  const isAligned = row === emptyRow || col === emptyCol;
-                  const isCorrect = pos === tileId;
-
-                  let arrowDir: SlideDirection | null = null;
-                  if (isAdjacent) {
-                    if (row < emptyRow) arrowDir = 'down';
-                    else if (row > emptyRow) arrowDir = 'up';
-                    else if (col < emptyCol) arrowDir = 'right';
-                    else if (col > emptyCol) arrowDir = 'left';
-                  }
-
-                  return (
-                    <div
-                      key={tileId}
-                      className="pz-tile-slot"
-                      style={{ '--row': row, '--col': col } as CSSProperties}
-                    >
-                      <button
-                        type="button"
-                        className={`pz-tile${isAdjacent ? ' is-movable' : ''}${isAligned ? ' is-slidable' : ''}`}
-                        aria-label={`Ô ${tileId + 1}${isCorrect ? ', đúng vị trí' : ''}${isAdjacent ? ', chạm để trượt' : ''}`}
-                        onClick={() => {
-                          if (swipedRef.current) {
-                            swipedRef.current = false;
-                            return;
-                          }
-                          applySlide(slideTile(game.board, game.size, pos));
-                        }}
-                        style={{
-                          backgroundImage: `url("${game.artSrc}")`,
-                          backgroundSize: `${game.size * 100}% ${game.size * 100}%`,
-                          backgroundPosition: bgPos,
-                        }}
-                      >
-                        {game.showNumbers && (
-                          <span className={`pz-tile__num${isCorrect ? ' is-ok' : ''}`}>{tileId + 1}</span>
-                        )}
-                        {arrowDir && (
-                          <span className={`pz-tile__arrow pz-tile__arrow--${arrowDir}`} aria-hidden="true">
-                            <img
-                              src="/art/puzzles/arrow.webp"
-                              alt=""
-                              className="pz-tile__arrow-img"
-                              draggable={false}
-                            />
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
+          <div className="pz-play__body">
+            <div className="pz-hud" aria-label="Thông số ván xếp hình">
+              <div className="pz-hud__side pz-hud__side--left">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M5 12h14" />
+                  <path d="m13 6 6 6-6 6" />
+                </svg>
+                <span>{game.moves} bước</span>
+              </div>
+              <div className="pz-hud__center">{correctCount}/{totalTiles} đúng</div>
+              <div className="pz-hud__side pz-hud__side--right">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 7v5l3 2" />
+                </svg>
+                <span>{formatTimer(game.elapsedSec)}</span>
               </div>
             </div>
-          </div>
 
-          <div className="pz-controls">
-            <button
-              type="button"
-              className={`pz-ctrl${game.showNumbers ? ' is-on' : ''}`}
-              aria-pressed={game.showNumbers}
-              onClick={() => {
-                setGame((current) => {
-                  if (!current) return current;
-                  const next = { ...current, showNumbers: !current.showNumbers };
-                  persistIfBuiltIn(next);
-                  return next;
-                });
-              }}
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <line x1="4" y1="9" x2="20" y2="9" />
-                <line x1="4" y1="15" x2="20" y2="15" />
-                <line x1="10" y1="3" x2="8" y2="21" />
-                <line x1="16" y1="3" x2="14" y2="21" />
-              </svg>
-              <span>Đánh số</span>
-            </button>
-            <button
-              type="button"
-              className={`pz-ctrl pz-ctrl--ref${showRefModal ? ' is-open' : ''}`}
-              onClick={() => setShowRefModal(true)}
-            >
-              <img className="pz-ctrl__thumb" src={game.artSrc} alt="" />
-              <span>Xem mẫu</span>
-            </button>
-            <button
-              type="button"
-              className="pz-ctrl pz-ctrl--warm"
-              onClick={() => {
-                setShuffleTick((n) => n + 1);
-                reshuffleCurrent();
-              }}
-            >
-              <span key={shuffleTick} className={`pz-ctrl__icon${shuffleTick > 0 ? ' is-spinning' : ''}`} aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                  <path d="M3 3v5h5" />
+            <div className="pz-board-wrap">
+              <div
+                className="pz-board-frame"
+                data-size={game.size}
+                style={{ '--pz-size': game.size } as CSSProperties}
+                onTouchStart={handleBoardTouchStart}
+                onTouchEnd={handleBoardTouchEnd}
+              >
+                <div className="pz-board-well" role="group" aria-label={`Khung trượt ${game.size}×${game.size}`}>
+                  {/* Recessed empty slot underneath */}
+                  <div
+                    className="pz-empty-well"
+                    aria-hidden="true"
+                    style={{ '--row': emptyRow, '--col': emptyCol } as CSSProperties}
+                  >
+                    <div className="pz-empty-well__inner" />
+                  </div>
+
+                  {/* Sliding picture tiles keyed by tileId for smooth transform transitions */}
+                  {Array.from({ length: totalTiles }, (_, tileId) => {
+                    const pos = game.board.indexOf(tileId);
+                    if (pos < 0) return null;
+                    const row = Math.floor(pos / game.size);
+                    const col = pos % game.size;
+                    const targetRow = Math.floor(tileId / game.size);
+                    const targetCol = tileId % game.size;
+                    const bgPos = `${(targetCol / (game.size - 1)) * 100}% ${(targetRow / (game.size - 1)) * 100}%`;
+                    const isAdjacent = Math.abs(row - emptyRow) + Math.abs(col - emptyCol) === 1;
+                    const isAligned = row === emptyRow || col === emptyCol;
+                    const isCorrect = pos === tileId;
+
+                    let arrowDir: SlideDirection | null = null;
+                    if (isAdjacent) {
+                      if (row < emptyRow) arrowDir = 'down';
+                      else if (row > emptyRow) arrowDir = 'up';
+                      else if (col < emptyCol) arrowDir = 'right';
+                      else if (col > emptyCol) arrowDir = 'left';
+                    }
+
+                    return (
+                      <div
+                        key={tileId}
+                        className="pz-tile-slot"
+                        style={{ '--row': row, '--col': col } as CSSProperties}
+                      >
+                        <button
+                          type="button"
+                          className={`pz-tile${isAdjacent ? ' is-movable' : ''}${isAligned ? ' is-slidable' : ''}`}
+                          aria-label={`Ô ${tileId + 1}${isCorrect ? ', đúng vị trí' : ''}${isAdjacent ? ', chạm để trượt' : ''}`}
+                          onClick={() => {
+                            if (swipedRef.current) {
+                              swipedRef.current = false;
+                              return;
+                            }
+                            applySlide(slideTile(game.board, game.size, pos));
+                          }}
+                          style={{
+                            backgroundImage: `url("${game.artSrc}")`,
+                            backgroundSize: `${game.size * 100}% ${game.size * 100}%`,
+                            backgroundPosition: bgPos,
+                          }}
+                        >
+                          {game.showNumbers && (
+                            <span className={`pz-tile__num${isCorrect ? ' is-ok' : ''}`}>{tileId + 1}</span>
+                          )}
+                          {arrowDir && (
+                            <span className={`pz-tile__arrow pz-tile__arrow--${arrowDir}`} aria-hidden="true">
+                              <img
+                                src="/art/puzzles/arrow.webp"
+                                alt=""
+                                className="pz-tile__arrow-img"
+                                draggable={false}
+                              />
+                            </span>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="pz-controls">
+              <button
+                type="button"
+                className={`pz-ctrl${game.showNumbers ? ' is-on' : ''}`}
+                aria-pressed={game.showNumbers}
+                onClick={() => {
+                  setGame((current) => {
+                    if (!current) return current;
+                    const next = { ...current, showNumbers: !current.showNumbers };
+                    persistIfBuiltIn(next);
+                    return next;
+                  });
+                }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="4" y1="9" x2="20" y2="9" />
+                  <line x1="4" y1="15" x2="20" y2="15" />
+                  <line x1="10" y1="3" x2="8" y2="21" />
+                  <line x1="16" y1="3" x2="14" y2="21" />
                 </svg>
-              </span>
-              <span>Xáo lại</span>
-            </button>
+                <span>Đánh số</span>
+              </button>
+              <button
+                type="button"
+                className={`pz-ctrl pz-ctrl--ref${showRefModal ? ' is-open' : ''}`}
+                onClick={() => setShowRefModal(true)}
+              >
+                <img className="pz-ctrl__thumb" src={game.artSrc} alt="" />
+                <span>Xem mẫu</span>
+              </button>
+              <button
+                type="button"
+                className="pz-ctrl pz-ctrl--warm"
+                onClick={() => {
+                  setShuffleTick((n) => n + 1);
+                  reshuffleCurrent();
+                }}
+              >
+                <span key={shuffleTick} className={`pz-ctrl__icon${shuffleTick > 0 ? ' is-spinning' : ''}`} aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                    <path d="M3 3v5h5" />
+                  </svg>
+                </span>
+                <span>Xáo lại</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -632,7 +658,7 @@ export function PuzzlePanel({
       <header className="pz-gallery-head">
         <div className="pz-gallery-head__left">
           <h1 id="pz-title" className="pz-gallery-head__brand">
-            <img src="/art/xconnect.webp" alt="XConnect" />
+            <img src="/art/xconnect.webp?v=2" alt="XConnect" />
           </h1>
         </div>
         <button
@@ -655,9 +681,9 @@ export function PuzzlePanel({
             <div className="pz-resume__info">
               <span className="pz-resume__eyebrow">Đang xếp dở</span>
               <strong>{savedArt.title}</strong>
-              <span>{savedSession.size}×{savedSession.size} · {savedSession.moves} bước · {formatTimer(savedSession.elapsedSec)}</span>
+              <span className="pz-resume__meta">{savedSession.size}×{savedSession.size} · {savedSession.moves} bước · {formatTimer(savedSession.elapsedSec)}</span>
             </div>
-            <button type="button" className="pz-resume__btn" onClick={resumeSaved}>
+            <button type="button" className="pz-btn pz-btn--green pz-btn--sm" onClick={resumeSaved}>
               Tiếp tục
             </button>
           </article>
@@ -720,11 +746,13 @@ export function PuzzlePanel({
             className="pz-art-tile pz-art-tile--custom"
             onClick={() => void openCustomPicker()}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="16" rx="2.5" />
-              <circle cx="8.5" cy="9.5" r="1.4" />
-              <path d="m21 15-4.5-4.5L7 20" />
-            </svg>
+            <span className="pz-custom-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2.5" />
+                <circle cx="8.5" cy="9.5" r="1.4" />
+                <path d="m21 15-4.5-4.5L7 20" />
+              </svg>
+            </span>
             <strong>Ảnh của bạn</strong>
             <span>Từ máy hoặc Nhật ký</span>
           </button>

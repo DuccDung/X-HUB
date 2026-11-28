@@ -56,7 +56,7 @@ Node.js phục vụ trang khách, `/admin`, API và Socket.IO tại `http://127.
 2. Mở liên kết ở hai hồ sơ trình duyệt riêng để thử hai bàn. Tạo nhân vật và bấm **Bước vào phòng**. Số bàn, dấu **Bạn đang ở đây** và nhân vật xuất hiện trên sơ đồ. Bấm số bàn ở đầu trang để chỉnh lại tên và trang phục. Hồ sơ đã lưu được dùng lại trên cùng trình duyệt.
 3. Trong admin, kéo bàn để dời cả cụm hoặc kéo một ghế để chỉnh riêng. Có thể đổi kiểu bàn, xoay cụm và nhập tọa độ bằng bàn phím. Mở **Xem trước** để đối chiếu vị trí trên khung điện thoại.
 4. Chọn **Lưu nháp**, rồi **Công bố**. Trang khách đang mở nhận sơ đồ mới qua Socket.IO. Các mã QR đã in tiếp tục dùng được cho những bàn còn trong sơ đồ.
-5. Chạm một bàn có khách online để nhắn tin hoặc mời chơi. Ván caro dùng bàn 15 × 15 và thắng khi nối năm quân liên tiếp. Nhật ký riêng có thể mở lại trên trình duyệt đã quét QR.
+5. Chạm một bàn có khách online để nhắn tin hoặc mời chơi. Ván caro dùng bàn 50 × 50 và thắng khi nối năm quân liên tiếp. Nhật ký riêng có thể mở lại trên trình duyệt đã quét QR.
 
 SQLite tự tạo sơ đồ mẫu 12 bàn ở lần chạy đầu. Bố cục và nhật ký được lưu vào tệp `XUONG_DB`. Chat, lời mời và ván caro đang chơi được giữ trong RAM, nên các phiên này kết thúc khi tiến trình khởi động lại.
 

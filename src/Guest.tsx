@@ -521,14 +521,20 @@ export function Guest() {
   }
 
   return (
-    <div className="guest-shell">
+    <div className="guest-shell" data-tab={tab}>
       {tab === 'map' && <header className="guest-header">
         <button className="guest-brand" aria-label="XConnect, về sơ đồ" onClick={() => selectTab('map')}>
-          <img src="/art/xconnect.webp" alt="XConnect" />
+          <img src="/art/xconnect.webp?v=2" alt="XConnect" />
         </button>
         {current && <button className="guest-seat" type="button" onClick={openCharacter}
           aria-label={profile ? `Chỉnh nhân vật, bàn ${current.label}` : undefined}>
-          <span className="guest-seat__pin" aria-hidden="true" />
+          <svg className="guest-seat__pin-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              fill="currentColor"
+              fillRule="evenodd"
+              d="M12 2.25c-4.28 0-7.75 3.38-7.75 7.55 0 5.3 6.57 11.27 7.18 11.81a.85.85 0 0 0 1.14 0c.61-.54 7.18-6.51 7.18-11.81 0-4.17-3.47-7.55-7.75-7.55Zm0 10.2a2.65 2.65 0 1 1 0-5.3 2.65 2.65 0 0 1 0 5.3Z"
+            />
+          </svg>
           <span className="guest-seat__label">{profile ? `Bàn ${current.label}` : 'Tạo nhân vật'}</span>
         </button>}
       </header>}

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { io } from 'socket.io-client'
+import { findCaroWinningLine, pickBotMove } from '../src/caroBot.ts'
+import { caroBoardSize } from '../src/shared.ts'
 import type { AdminLayout, SocialState, VenueState } from '../src/shared.ts'
 import { checkInGuest, extractCookie, startTestServer } from './helpers.ts'
 import type { TestServerHandle } from './helpers.ts'
@@ -202,22 +204,27 @@ describe('Core Regression — Admin, Venue, Character, Chat, and Caro', () => {
       assert.equal(acceptRes.status, 200)
       const gameState = await acceptRes.json() as SocialState
       const gameId = gameState.games[0].id
+      assert.equal(gameState.games[0].size, 50)
+      assert.equal(gameState.games[0].board.length, 2500)
 
       // Out-of-turn O move -> 409
       const badTurn = await fetch(`${server.baseUrl}/api/caro/games/${gameId}/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: server.baseUrl, Cookie: cookieB },
-        body: JSON.stringify({ index: 112 }),
+        body: JSON.stringify({ index: 1275 }),
       })
       assert.equal(badTurn.status, 409)
 
-      // Valid X move -> 200
+      // Valid X move near center of 50x50 board -> 200
       const moveX = await fetch(`${server.baseUrl}/api/caro/games/${gameId}/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: server.baseUrl, Cookie: cookieA },
-        body: JSON.stringify({ index: 112 }),
+        body: JSON.stringify({ index: 1275 }),
       })
       assert.equal(moveX.status, 200)
+      const afterMove = await moveX.json() as SocialState
+      assert.equal(afterMove.games[0].board[1275], 'X')
+      assert.equal(afterMove.games[0].lastMove, 1275)
 
       // Draw offer & decline
       assert.equal((await fetch(`${server.baseUrl}/api/caro/games/${gameId}/draw`, {
@@ -258,5 +265,33 @@ describe('Core Regression — Admin, Venue, Character, Chat, and Caro', () => {
       sockA.disconnect()
       sockB.disconnect()
     }
+  })
+
+  it('supports 50×50 Caro Bot moves and 5-in-a-row win detection across the full board', () => {
+    const board = Array<'X' | 'O' | null>(caroBoardSize * caroBoardSize).fill(null)
+    // Bot opens at exact center (25, 25) on medium/hard
+    const openMove = pickBotMove(board, 'X', 'medium')
+    assert.equal(openMove, 25 * caroBoardSize + 25)
+
+    // Place 4 X pieces diagonally far from origin (row 40..43, col 42..45)
+    for (let k = 0; k < 4; k++) {
+      board[(40 + k) * caroBoardSize + (42 + k)] = 'X'
+    }
+    // Hard Bot playing O must block one of the open ends: (39, 41) or (44, 46)
+    const blockMove = pickBotMove(board, 'O', 'hard')
+    const endA = 39 * caroBoardSize + 41
+    const endB = 44 * caroBoardSize + 46
+    assert.ok(blockMove === endA || blockMove === endB, `expected block at ${endA} or ${endB}, got ${blockMove}`)
+
+    // Completing the 5th X returns the exact sorted 5-cell winning line
+    board[endB] = 'X'
+    const line = findCaroWinningLine(board, endB, 'X')
+    assert.deepEqual(line, [
+      40 * caroBoardSize + 42,
+      41 * caroBoardSize + 43,
+      42 * caroBoardSize + 44,
+      43 * caroBoardSize + 45,
+      44 * caroBoardSize + 46,
+    ])
   })
 })

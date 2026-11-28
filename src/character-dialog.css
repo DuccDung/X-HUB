@@ -21,7 +21,6 @@
   overflow: auto;
   overscroll-behavior: contain;
   scroll-padding-block: 12px 70px;
-  scrollbar-width: thin;
   animation: character-sheet-enter 190ms ease-out;
 }
 

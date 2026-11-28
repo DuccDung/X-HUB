@@ -1,3 +1,5 @@
+import { caroBoardSize } from './shared.ts';
+
 export type BotDifficulty = 'easy' | 'medium' | 'hard';
 type Mark = 'X' | 'O';
 
@@ -12,7 +14,7 @@ export function findCaroWinningLine(
   board: (Mark | null)[],
   index: number,
   mark: Mark,
-  size = 15,
+  size = caroBoardSize,
 ): number[] | null {
   const x = index % size;
   const y = Math.floor(index / size);
@@ -104,7 +106,7 @@ export function pickBotMove(
   board: (Mark | null)[],
   botMark: Mark,
   difficulty: BotDifficulty,
-  size = 15,
+  size = caroBoardSize,
 ): number {
   const oppMark: Mark = botMark === 'X' ? 'O' : 'X';
   const candidates = candidateCells(board, size);

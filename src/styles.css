@@ -17,6 +17,15 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #bfa4836e; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: #9b7e5b99; }
+*::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+*::-webkit-scrollbar-corner { background: transparent; }
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: #bfa48380 transparent; }
+}
 body { margin: 0; min-width: 280px; }
 button, input, textarea, select { font: inherit; }
 button { border: 0; background: transparent; padding: 0; color: inherit; cursor: pointer; }
